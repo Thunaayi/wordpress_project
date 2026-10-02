@@ -104,6 +104,120 @@ const SITES = {
     },
   },
 
+  // UNVERIFIED (czone, techmatched, zestrogaming below): I confirmed these
+  // three sites are live, but couldn't pull a real product page to check
+  // actual CSS classes, so these reuse the generic template from techlad/
+  // zahcomputers above. Before running at volume: open one product page on
+  // each, inspect-element the price and title, and confirm the selectors
+  // below actually match. If they don't, that site will just silently
+  // return nothing instead of erroring — worth testing on 1 product first.
+  czone: {
+    name: "czone.com.pk",
+    baseUrl: "https://czone.com.pk",
+    searchUrl: "https://czone.com.pk/?s={query}&post_type=product",
+    productUrlPattern: /\/product\/[\w-]+/,
+    selectors: {
+      searchResults: ".product-item, .product-grid-item, .product-card",
+      productLink: "a[href*=\"/product/\"]",
+      name: "h1.product-title, h1.product-name, .product-title",
+      price: ".price, .product-price, .special-price, .price-box .price",
+      originalPrice: ".old-price, .price-old, .was-price",
+      description: ".product-description, .description, .product-details .description, .tab-content.description",
+      shortDescription: ".short-description, .product-short-description",
+      specsTable: ".specifications-table, .product-specifications table, .product-attributes table, .data-table",
+      specsRows: "tr",
+      specLabel: "th, td:first-child",
+      specValue: "td:last-child, td:nth-child(2)",
+      specsList: ".specifications-list, .product-specs dl, .attributes-list",
+      specItem: "dt, .spec-label",
+      specValueDD: "dd, .spec-value",
+      mainImage: ".product-image img, .product-gallery img, .main-image img",
+      galleryImages: ".product-gallery img, .product-images img, .gallery img",
+      specsTab: "#specification, #specifications, .tab-specification",
+      breadcrumbs: ".breadcrumb, .breadcrumbs, .product-breadcrumb",
+      availability: ".stock, .availability, .in-stock, .out-of-stock",
+      brand: ".brand, .product-brand, .manufacturer",
+      sku: ".sku, .product-sku, .product-code",
+    },
+    searchSelectors: {
+      input: "input[name=\"q\"], input[name=\"search\"], #search, .search-input",
+      button: "button[type=\"submit\"], .search-btn, .search-button",
+      results: ".search-results, .products-grid, .product-listing",
+    },
+  },
+
+  techmatched: {
+    name: "techmatched.pk",
+    baseUrl: "https://techmatched.pk",
+    searchUrl: "https://techmatched.pk/?s={query}&post_type=product",
+    productUrlPattern: /\/product\/[\w-]+/,
+    selectors: {
+      searchResults: ".product-item, .product-grid-item, .product-card",
+      productLink: "a[href*=\"/product/\"]",
+      name: "h1.product-title, h1.product-name, .product-title",
+      price: ".price, .product-price, .special-price, .price-box .price",
+      originalPrice: ".old-price, .price-old, .was-price",
+      description: ".product-description, .description, .product-details .description, .tab-content.description",
+      shortDescription: ".short-description, .product-short-description",
+      specsTable: ".specifications-table, .product-specifications table, .product-attributes table, .data-table",
+      specsRows: "tr",
+      specLabel: "th, td:first-child",
+      specValue: "td:last-child, td:nth-child(2)",
+      specsList: ".specifications-list, .product-specs dl, .attributes-list",
+      specItem: "dt, .spec-label",
+      specValueDD: "dd, .spec-value",
+      mainImage: ".product-image img, .product-gallery img, .main-image img",
+      galleryImages: ".product-gallery img, .product-images img, .gallery img",
+      specsTab: "#specification, #specifications, .tab-specification",
+      breadcrumbs: ".breadcrumb, .breadcrumbs, .product-breadcrumb",
+      availability: ".stock, .availability, .in-stock, .out-of-stock",
+      brand: ".brand, .product-brand, .manufacturer",
+      sku: ".sku, .product-sku, .product-code",
+    },
+    searchSelectors: {
+      input: "input[name=\"q\"], input[name=\"search\"], #search, .search-input",
+      button: "button[type=\"submit\"], .search-btn, .search-button",
+      results: ".search-results, .products-grid, .product-listing",
+    },
+  },
+
+  // The ZestrogamingScraper class assumes zestrogaming.pk — the real
+  // domain is zestrogaming.com. Fixed here.
+  zestrogaming: {
+    name: "zestrogaming.com",
+    baseUrl: "https://zestrogaming.com",
+    searchUrl: "https://zestrogaming.com/?s={query}&post_type=product",
+    productUrlPattern: /\/product\/[\w-]+/,
+    selectors: {
+      searchResults: ".product-item, .product-grid-item, .product-card",
+      productLink: "a[href*=\"/product/\"]",
+      name: "h1.product-title, h1.product-name, .product-title",
+      price: ".price, .product-price, .special-price, .price-box .price",
+      originalPrice: ".old-price, .price-old, .was-price",
+      description: ".product-description, .description, .product-details .description, .tab-content.description",
+      shortDescription: ".short-description, .product-short-description",
+      specsTable: ".specifications-table, .product-specifications table, .product-attributes table, .data-table",
+      specsRows: "tr",
+      specLabel: "th, td:first-child",
+      specValue: "td:last-child, td:nth-child(2)",
+      specsList: ".specifications-list, .product-specs dl, .attributes-list",
+      specItem: "dt, .spec-label",
+      specValueDD: "dd, .spec-value",
+      mainImage: ".product-image img, .product-gallery img, .main-image img",
+      galleryImages: ".product-gallery img, .product-images img, .gallery img",
+      specsTab: "#specification, #specifications, .tab-specification",
+      breadcrumbs: ".breadcrumb, .breadcrumbs, .product-breadcrumb",
+      availability: ".stock, .availability, .in-stock, .out-of-stock",
+      brand: ".brand, .product-brand, .manufacturer",
+      sku: ".sku, .product-sku, .product-code",
+    },
+    searchSelectors: {
+      input: "input[name=\"q\"], input[name=\"search\"], #search, .search-input",
+      button: "button[type=\"submit\"], .search-btn, .search-button",
+      results: ".search-results, .products-grid, .product-listing",
+    },
+  },
+
   pclab: {
     name: "pclab.pk",
     baseUrl: "https://pclab.pk",

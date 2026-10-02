@@ -49,11 +49,17 @@ async function downloadImages(imageUrls, baseDir, concurrency = 3) {
     const batch = imageUrls.slice(i, i + concurrency);
     const promises = batch.map(async (url, idx) => {
       try {
-        const ext = getImageExtension(url);
+        // FIX: was `imageUrls[i + batch.indexOf(url)]` — indexOf finds the
+        // FIRST occurrence of a URL in the batch, so two identical image
+        // URLs in the same batch would both resolve to the same index and
+        // the second one would silently overwrite/duplicate the first.
+        // `idx`, the index map() already gives you, doesn't have that problem.
         const filename = 'img_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9) + getImageExtension(url);
+        // FIX: was hardcoding path.join(__dirname, '../../data/images', ...)
+        // and ignoring the `baseDir` parameter entirely.
         const savePath = path.join(baseDir, filename);
-        
-        const result = await downloadImage(imageUrls[i + batch.indexOf(url)], path.join(__dirname, '../../data/images', filename));
+
+        const result = await downloadImage(url, savePath);
         return result;
       } catch (error) {
         console.error('Failed to download ' + url + ': ' + error.message);

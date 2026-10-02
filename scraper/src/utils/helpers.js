@@ -6,10 +6,18 @@ const { parse } = require('csv-parse/sync');
  * Load all products from master price list
  */
 function loadMasterProducts() {
-  const masterContent = fs.readFileSync(
-    'C:/Users/Aimal/Documents/GitHub/Wordpress project/claude\u0027s findings/all_products_MASTER_combined.csv', 
-    'utf-8'
-  );
+  // Was a hardcoded Windows path (C:/Users/Aimal/...) — only worked on one
+  // machine, in one exact folder layout, and wasn't even committed to the repo.
+  // Now relative to this file, so it works on any clone as long as the CSV
+  // is placed at scraper/data/all_products_MASTER_combined.csv.
+  const masterPath = path.join(__dirname, "../../data/all_products_MASTER_combined.csv");
+  if (!fs.existsSync(masterPath)) {
+    throw new Error(
+      "Master products CSV not found at " + masterPath +
+      ". Put all_products_MASTER_combined.csv in scraper/data/ before running."
+    );
+  }
+  const masterContent = fs.readFileSync(masterPath, 'utf-8');
   const records = parse(masterContent, { 
     columns: true, 
     skip_empty_lines: true, 
@@ -31,7 +39,16 @@ function loadMasterProducts() {
  * Load existing DB products
  */
 function loadDBProducts() {
-  const dbContent = fs.readFileSync('C:/Users/Aimal/Documents/GitHub/Wordpress project/wc-product-export-latest.csv', 'utf-8');
+  // Same fix as loadMasterProducts: was a hardcoded Windows path.
+  // Put your current wp-admin > Products > Export file here before running.
+  const dbPath = path.join(__dirname, "../../data/wc-product-export-latest.csv");
+  if (!fs.existsSync(dbPath)) {
+    throw new Error(
+      "WooCommerce export not found at " + dbPath +
+      ". Export your current products from wp-admin and save it there before running."
+    );
+  }
+  const dbContent = fs.readFileSync(dbPath, 'utf-8');
   const records = parse(dbContent, { 
     columns: true, 
     skip_empty_lines: true,
@@ -169,21 +186,13 @@ function normalizeBrand(brand) {
 
 function extractBrandFromName(name) {
   const lowerName = name.toLowerCase();
-  for (const [canon, aliases] of Object.entries(require('./helpers').BRAND_ALIASES)) {
+  for (const [canon, aliases] of Object.entries(BRAND_ALIASES)) {
     if (canon === 'gm') continue;
     for (const alias of aliases) {
       if (lowerName.includes(alias.toLowerCase())) return canon;
     }
   }
   return null;
-}
-
-function normalizeBrand(brand) {
-  const b = brand.toLowerCase().trim();
-  for (const [canon, aliases] of Object.entries(require('./helpers').BRAND_ALIASES)) {
-    if (aliases.includes(b)) return canon;
-  }
-  return b;
 }
 
 function normalizeName(name) {
@@ -234,22 +243,7 @@ function calculateNewPrice(dealerPrice) {
   else if (dealerPrice < 50000) margin = Math.min(2000, Math.round(dealerPrice * 0.07));
   else if (dealerPrice < 100000) margin = Math.min(2500, Math.round(dealerPrice * 0.05));
   else margin = Math.min(2500, Math.round(dealerPrice * 0.03));
-  
-  const newPrice = dealerPrice + margin;
-  if (newPrice < 10000) return Math.round(newPrice / 100) * 100;
-  else if (newPrice < 50000) return Math.round(newPrice / 500) * 500;
-  else if (newPrice < 100000) return Math.round(newPrice / 1000) * 1000;
-  else return Math.round(newPrice / 5000) * 5000;
-}
 
-function calculateNewPrice(dealerPrice) {
-  let margin;
-  if (dealerPrice < 5000) margin = Math.min(500, Math.round(dealerPrice * 0.15));
-  else if (dealerPrice < 20000) margin = Math.min(1500, Math.round(dealerPrice * 0.10));
-  else if (dealerPrice < 50000) margin = Math.min(2000, Math.round(dealerPrice * 0.07));
-  else if (dealerPrice < 100000) margin = Math.min(2500, Math.round(dealerPrice * 0.05));
-  else margin = Math.min(2500, Math.round(dealerPrice * 0.03));
-  
   const newPrice = dealerPrice + margin;
   if (newPrice < 10000) return Math.round(newPrice / 100) * 100;
   else if (newPrice < 50000) return Math.round(newPrice / 500) * 500;
