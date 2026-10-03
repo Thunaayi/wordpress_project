@@ -83,25 +83,61 @@ class ProductExtractor {
 
       const currency = clean(offers.priceCurrency) || meta("product:price:currency");
 
-      const images = [];
+      // Look inside an actual product-gallery container first. Scanning the
+      // whole page (old behavior) also picks up nav icons, related-product
+      // thumbnails, and "no photo" placeholder icons that have nothing to do
+      // with this product.
+      const galleryContainers = [
+        ".woocommerce-product-gallery", ".product-gallery", ".product-images",
+        ".product-image-gallery", "#product-images", ".product-photos",
+        ".product-media", ".pdp-gallery", ".item-gallery"
+      ];
+      let scope = null;
+      for (const sel of galleryContainers) {
+        const el = document.querySelector(sel);
+        if (el) { scope = el; break; }
+      }
+
+      const collectFrom = (root) => {
+        const found = [];
+        root.querySelectorAll("img").forEach((img) => {
+          const value = attr(img, [
+            "data-large_image", "data-large-image", "data-full", "data-zoom-image",
+            "data-src", "data-lazy-src", "data-original", "src"
+          ]);
+          if (value) found.push({ url: absolute(value), w: img.naturalWidth || 0, h: img.naturalHeight || 0 });
+          const srcset = attr(img, ["data-srcset", "srcset"]);
+          if (srcset) {
+            srcset.split(",").forEach((part) =>
+              found.push({ url: absolute(part.trim().split(/\\s+/)[0]), w: 0, h: 0 })
+            );
+          }
+        });
+        return found;
+      };
+
+      let rawImages = scope ? collectFrom(scope) : [];
+      if (!rawImages.length) rawImages = collectFrom(document);
+
       imageLd.forEach((image) => {
-        if (typeof image === "string") images.push(absolute(image));
-      });
-      document.querySelectorAll("img").forEach((img) => {
-        const value = attr(img, [
-          "data-large_image", "data-large-image", "data-full", "data-zoom-image",
-          "data-src", "data-lazy-src", "data-original", "src"
-        ]);
-        if (value) images.push(absolute(value));
-        const srcset = attr(img, ["data-srcset", "srcset"]);
-        if (srcset) {
-          srcset.split(",").forEach((part) => images.push(absolute(part.trim().split(/\\s+/)[0])));
-        }
+        if (typeof image === "string") rawImages.push({ url: absolute(image), w: 0, h: 0 });
       });
 
-      const badImage = (url) => /(?:logo|icon|avatar|payment|sprite|placeholder|loader|spinner|favicon)/i.test(url);
-      const uniqueImages = [...new Set(images.filter(Boolean))]
-        .filter((url) => !badImage(url))
+      // "Bad" covers both obviously-named placeholders and the generic
+      // category/no-photo icon shape: small, square, and usually an SVG or
+      // a tiny bitmap rather than an actual product photo.
+      const badImage = ({ url, w, h }) => {
+        if (!url) return true;
+        if (/(?:logo|icon|avatar|payment|sprite|placeholder|loader|spinner|favicon|no[-_]?image|no[-_]?photo|dummy|default[-_]?product|coming[-_]?soon|missing[-_]?image)/i.test(url)) return true;
+        if (/\.svg(?:\?.*)?$/i.test(url)) return true;
+        if (w && h && (w < 150 || h < 150)) return true;
+        return false;
+      };
+
+      const uniqueImages = [...new Set(rawImages.filter((i) => i.url).map((i) => JSON.stringify(i)))]
+        .map((s) => JSON.parse(s))
+        .filter((i) => !badImage(i))
+        .map((i) => i.url)
         .slice(0, 20);
 
       const specs = {};

@@ -293,6 +293,31 @@ class ScraperOrchestrator {
     await scraper.goto(productUrl);
     await scraper.sleep(700);
 
+    // Many themes hide the real spec sheet behind a "Specifications" /
+    // "Additional Information" tab that only renders once clicked. Try the
+    // common ones; harmless no-op if the site doesn't use tabs at all.
+    try {
+      const clicked = await scraper.clickElement([
+        "a[href='#tab-additional_information']", "a[href='#tab-specification']",
+        "#tab-title-additional_information a", ".specification-tab", ".tab-specs",
+        "a[data-tab='specification']", "a[data-tab='additional_information']",
+        "#tab-specifications", ".specs-tab",
+      ]);
+      if (clicked) await scraper.sleep(500);
+    } catch (e) {
+      // non-fatal: site doesn't use tabs, specs are probably already visible
+    }
+
+    // Lazy-loaded galleries only swap in the real photo once it scrolls into
+    // view — without this, extraction can grab the site's generic "no photo"
+    // placeholder icon instead of the actual product image.
+    try {
+      await scraper.scrollToBottom();
+      await scraper.sleep(800);
+    } catch (e) {
+      // non-fatal, extraction still runs on whatever loaded
+    }
+
     const extracted = await ProductExtractor.extract(scraper.page);
 
     if (!extracted.name) {
