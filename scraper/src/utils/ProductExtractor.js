@@ -139,7 +139,6 @@ class ProductExtractor {
         ".attribute", ".detail-row"
       ];
       document.querySelectorAll(rowSelectors.join(",")).forEach((row) => {
-        const label = first.call(null, []); // keep extraction local to row below
         const parts = [...row.querySelectorAll("th,td,.label,.name,.title,.key,.attribute-label,.spec-label,.value,.attribute-value,.spec-value")]
           .map((x) => clean(x.textContent)).filter(Boolean);
         if (parts.length >= 2) put(parts[0], parts.slice(1).join(" | "));
