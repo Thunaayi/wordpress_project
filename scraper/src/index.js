@@ -210,7 +210,7 @@ class ScraperOrchestrator {
               try { return new URL(link.getAttribute("href"), baseUrl).href; }
               catch { return ""; }
             })()
-          })).filter(x => x.href && x.text);
+          })).filter(x => x.href);
         }, scraper.siteConfig.baseUrl);
 
         let best = null;
