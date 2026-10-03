@@ -114,11 +114,15 @@ const SITES = {
   czone: {
     name: "czone.com.pk",
     baseUrl: "https://www.czone.com.pk",
-    searchUrl: "https://www.czone.com.pk/search.aspx?search={query}",\n    searchUrls: [\n      "https://www.czone.com.pk/search.aspx?search={query}",\n      "https://www.czone.com.pk/?s={query}&post_type=product"\n    ],
-    productUrlPattern: /\/product\/[\w-]+/,
+    searchUrl: "https://www.czone.com.pk/search.aspx?search={query}",
+    searchUrls: [
+      "https://www.czone.com.pk/search.aspx?search={query}",
+      "https://www.czone.com.pk/?s={query}&post_type=product"
+    ],
+    productUrlPattern: /\/[^/]+-p\.\d+\.aspx$/i,
     selectors: {
       searchResults: ".product-item, .product-grid-item, .product-card",
-      productLink: "a[href*=\"/product/\"]",
+      productLink: "a[href*=\".aspx\"]",
       name: "h1.product-title, h1.product-name, .product-title",
       price: ".price, .product-price, .special-price, .price-box .price",
       originalPrice: ".old-price, .price-old, .was-price",
