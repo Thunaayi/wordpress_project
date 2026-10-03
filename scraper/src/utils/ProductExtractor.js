@@ -148,14 +148,41 @@ class ProductExtractor {
         if (!specs[key]) specs[key] = value;
       };
 
-      document.querySelectorAll("table").forEach((table) => {
+      // Reading tables/definition-lists from the whole page picks up anything
+      // nearby that happens to be shaped like one: a "related products"
+      // comparison grid, a cart/checkout totals table, a reviews widget. Skip
+      // anything living inside one of those, whether or not a scoped specs
+      // container was found above.
+      const junkAncestorSelectors = [
+        "header", "footer", "nav", ".related", ".related-products", ".upsells",
+        ".cross-sells", ".comments", "#comments", ".reviews", "#reviews",
+        ".cart", ".cart-totals", ".checkout", ".widget", ".sidebar",
+        ".woocommerce-tabs .reviews_tab", ".site-header", ".site-footer"
+      ].join(",");
+      const inJunk = (el) => Boolean(el.closest(junkAncestorSelectors));
+
+      const specsScopeSelectors = [
+        "#tab-additional_information", ".woocommerce-product-attributes",
+        ".product-specifications", ".specifications-table", ".product-attributes",
+        ".tab-specs", ".specs-tab", ".product-info", ".pdp-specs", "#specifications"
+      ];
+      let specsScope = null;
+      for (const sel of specsScopeSelectors) {
+        const el = document.querySelector(sel);
+        if (el) { specsScope = el; break; }
+      }
+      const specsRoot = specsScope || document;
+
+      specsRoot.querySelectorAll("table").forEach((table) => {
+        if (inJunk(table)) return;
         table.querySelectorAll("tr").forEach((row) => {
           const cells = [...row.querySelectorAll("th,td")].map((x) => clean(x.textContent)).filter(Boolean);
           if (cells.length >= 2) put(cells[0], cells.slice(1).join(" | "));
         });
       });
 
-      document.querySelectorAll("dl").forEach((dl) => {
+      specsRoot.querySelectorAll("dl").forEach((dl) => {
+        if (inJunk(dl)) return;
         const dts = [...dl.querySelectorAll(":scope > dt")];
         dts.forEach((dt) => {
           let value = "";
@@ -174,7 +201,8 @@ class ProductExtractor {
         ".specification-row", ".product-specification", ".product-info-row",
         ".attribute", ".detail-row"
       ];
-      document.querySelectorAll(rowSelectors.join(",")).forEach((row) => {
+      specsRoot.querySelectorAll(rowSelectors.join(",")).forEach((row) => {
+        if (inJunk(row)) return;
         const parts = [...row.querySelectorAll("th,td,.label,.name,.title,.key,.attribute-label,.spec-label,.value,.attribute-value,.spec-value")]
           .map((x) => clean(x.textContent)).filter(Boolean);
         if (parts.length >= 2) put(parts[0], parts.slice(1).join(" | "));

@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const https = require("https");
 const http = require("http");
+const crypto = require("crypto");
 
 const {
   loadMasterProducts,
@@ -324,8 +325,16 @@ class ScraperOrchestrator {
       return null;
     }
 
+    const sku = extracted.sku || this.generateSku(extracted.name);
+
+    // Name files after the product we're actually trying to fill in (the
+    // distributor/master name, which is what the rest of the pipeline and
+    // the WordPress match are keyed on) rather than a timestamp, so anyone
+    // looking at data/images can tell which photo belongs to which product
+    // without opening the JSON.
+    const imageIdentity = (originalProduct && originalProduct.name) || extracted.name || sku;
     const imageUrls = [...new Set(extracted.images || [])];
-    const imagePaths = await this.downloadProductImages(imageUrls, scraper.page.url());
+    const imagePaths = await this.downloadProductImages(imageUrls, scraper.page.url(), imageIdentity, sku);
 
     return {
       name: extracted.name || "Unknown",
@@ -335,7 +344,7 @@ class ScraperOrchestrator {
       shortDescription: extracted.description || "",
       specs: extracted.specs || {},
       brand: extracted.brand || this.extractBrandFromName(extracted.name),
-      sku: extracted.sku || this.generateSku(extracted.name),
+      sku,
       category: this.extractCategory(extracted.breadcrumbs),
       availability: extracted.availability || "Unknown",
       images: imagePaths,
@@ -343,6 +352,17 @@ class ScraperOrchestrator {
       sourceUrl: scraper.page.url(),
       scrapedAt: new Date().toISOString(),
     };
+  }
+
+  // Turns a product name into a safe, readable filename fragment:
+  // "Thermalright TL-M10 Vision LCD Black" -> "thermalright-tl-m10-vision-lcd-black"
+  slugify(text) {
+    const slug = String(text || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .substring(0, 60);
+    return slug || "product";
   }
 
   parsePrice(value) {
@@ -377,17 +397,24 @@ class ScraperOrchestrator {
     return categories.find((cat) => text.includes(cat)) || "Uncategorized";
   }
 
-  async downloadProductImages(imageUrls, referer) {
+  async downloadProductImages(imageUrls, referer, productIdentity, sku) {
     if (!imageUrls.length) return [];
 
     const baseDir = path.join(__dirname, "../../data/images");
     if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
 
+    const slug = this.slugify(productIdentity);
+    const skuPart = sku ? "_" + this.slugify(sku).substring(0, 20) : "";
+
     const paths = [];
     for (let i = 0; i < imageUrls.length; i++) {
       const url = imageUrls[i];
       try {
-        const filename = "img_" + Date.now() + "_" + i + this.getImageExtension(url);
+        // A short hash of the URL (not a timestamp) keeps re-runs of the same
+        // product deterministic — the same photo gets the same filename
+        // instead of piling up duplicates every time the scraper runs again.
+        const urlHash = crypto.createHash("md5").update(url).digest("hex").substring(0, 8);
+        const filename = slug + skuPart + "_" + (i + 1) + "_" + urlHash + this.getImageExtension(url);
         const savePath = path.join(baseDir, filename);
         await this.downloadUrl(url, savePath, referer);
         paths.push(filename);
