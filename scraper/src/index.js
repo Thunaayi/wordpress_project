@@ -203,7 +203,7 @@ class ScraperOrchestrator {
           await scraper.goto(searchUrl);
           await scraper.sleep(900);
 
-          const candidates = await scraper.page.$eval("a[href]", (links, baseUrl) => {
+          const candidates = await scraper.page.$$eval("a[href]", (links, baseUrl) => {
           return links.map((link) => ({
             text: (link.innerText || link.textContent || "").replace(/\\s+/g, " ").trim(),
             href: (() => {
