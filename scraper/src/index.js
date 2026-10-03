@@ -193,14 +193,17 @@ class ScraperOrchestrator {
     const queries = this.buildSearchQueries(product);
 
     for (const query of queries) {
-      const template = scraper.siteConfig.searchUrl || (scraper.siteConfig.baseUrl + "/?s={query}");
-      const searchUrl = template.replace("{query}", encodeURIComponent(query));
+      const templates = scraper.siteConfig.searchUrls ||
+        [scraper.siteConfig.searchUrl || (scraper.siteConfig.baseUrl + "/?s={query}")];
 
-      try {
-        await scraper.goto(searchUrl);
-        await scraper.sleep(900);
+      for (const template of templates) {
+        const searchUrl = template.replace("{query}", encodeURIComponent(query));
 
-        const candidates = await scraper.page.$$eval("a[href]", (links, baseUrl) => {
+        try {
+          await scraper.goto(searchUrl);
+          await scraper.sleep(900);
+
+          const candidates = await scraper.page.$eval("a[href]", (links, baseUrl) => {
           return links.map((link) => ({
             text: (link.innerText || link.textContent || "").replace(/\\s+/g, " ").trim(),
             href: (() => {
@@ -224,9 +227,10 @@ class ScraperOrchestrator {
           }
         }
 
-        if (best && best.score >= 0.50) return best;
-      } catch (e) {
-        console.log("  Search failed on " + scraper.siteConfig.name + ": " + e.message);
+          if (best && best.score >= 0.50) return best;
+        } catch (e) {
+          console.log("  Search failed on " + scraper.siteConfig.name + ": " + e.message);
+        }
       }
     }
 
