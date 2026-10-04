@@ -113,11 +113,58 @@ class ProductExtractor {
             );
           }
         });
+        // A very common WooCommerce pattern wraps each gallery photo's
+        // thumbnail in a link to the actual full-resolution image
+        // (<a href="full-size.jpg"><img src="thumb.jpg"></a>), one <a> per
+        // slide, all present in the DOM at once even though only one slide
+        // is visible at a time. The <img> alone only gives the thumbnail;
+        // this is how the real, separate per-photo URLs get collected.
+        root.querySelectorAll("a[href]").forEach((a) => {
+          const href = a.getAttribute("href") || "";
+          if (/\.(jpe?g|png|webp|gif|avif)(\?.*)?$/i.test(href)) {
+            found.push({ url: absolute(href), w: 0, h: 0 });
+          }
+        });
         return found;
       };
 
+      // Scanning the whole page as a fallback (when no known gallery
+      // container matched this site's theme) picks up "related products"
+      // carousels, category banners, and sidebar graphics — same problem
+      // specs extraction had. Exclude the same junk regions here too.
+      const junkAncestorSelectorsForImages = [
+        "header", "footer", "nav", ".related", ".related-products", ".upsells",
+        ".cross-sells", ".comments", "#comments", ".reviews", "#reviews",
+        ".widget", ".sidebar", ".site-header", ".site-footer"
+      ].join(",");
+
       let rawImages = scope ? collectFrom(scope) : [];
-      if (!rawImages.length) rawImages = collectFrom(document);
+      if (!rawImages.length) {
+        // Collect page-wide, but skip junk regions at the querySelectorAll
+        // level (can't filter by ancestor after collectFrom already reduced
+        // elements down to bare URL strings).
+        document.querySelectorAll("img").forEach((img) => {
+          if (img.closest(junkAncestorSelectorsForImages)) return;
+          const value = attr(img, [
+            "data-large_image", "data-large-image", "data-full", "data-zoom-image",
+            "data-src", "data-lazy-src", "data-original", "src"
+          ]);
+          if (value) rawImages.push({ url: absolute(value), w: img.naturalWidth || 0, h: img.naturalHeight || 0 });
+          const srcset = attr(img, ["data-srcset", "srcset"]);
+          if (srcset) {
+            srcset.split(",").forEach((part) =>
+              rawImages.push({ url: absolute(part.trim().split(/\s+/)[0]), w: 0, h: 0 })
+            );
+          }
+        });
+        document.querySelectorAll("a[href]").forEach((a) => {
+          if (a.closest(junkAncestorSelectorsForImages)) return;
+          const href = a.getAttribute("href") || "";
+          if (/\.(jpe?g|png|webp|gif|avif)(\?.*)?$/i.test(href)) {
+            rawImages.push({ url: absolute(href), w: 0, h: 0 });
+          }
+        });
+      }
 
       imageLd.forEach((image) => {
         if (typeof image === "string") rawImages.push({ url: absolute(image), w: 0, h: 0 });

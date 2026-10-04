@@ -361,7 +361,19 @@ class ScraperOrchestrator {
       // non-fatal, extraction still runs on whatever loaded
     }
 
+    // Some gallery sliders (Slick/Swiper/Owl and similar) only keep ONE
+    // photo's <img src> in the DOM at a time and swap it via JS when a
+    // thumbnail is clicked, rather than keeping every slide present (which
+    // ProductExtractor's plain DOM read would already catch on its own).
+    // Click through whatever thumbnails exist and collect the main image's
+    // src after each click, so multi-photo products don't come back with
+    // only the one photo that happened to be showing on page load.
+    const extraGalleryImages = await this.collectGalleryImagesByClicking(scraper);
+
     const extracted = await ProductExtractor.extract(scraper.page);
+    if (extraGalleryImages.length) {
+      extracted.images = [...new Set([...(extracted.images || []), ...extraGalleryImages])];
+    }
 
     if (!extracted.name) {
       return null;
@@ -405,6 +417,56 @@ class ScraperOrchestrator {
       .replace(/^-+|-+$/g, "")
       .substring(0, 60);
     return slug || "product";
+  }
+
+  // Clicks through common gallery-thumbnail selectors one at a time and
+  // records whatever the "main" product image's src is after each click.
+  // Harmless no-op on a site that keeps all slides in the DOM at once
+  // (ProductExtractor already catches those); this is specifically for
+  // sliders that swap a single <img> via JS per click.
+  async collectGalleryImagesByClicking(scraper) {
+    const thumbnailSelectors = [
+      ".flex-control-thumbs img", ".woocommerce-product-gallery__image--placeholder",
+      ".product-thumbnails img", ".thumbnail-list img", ".gallery-thumbs img",
+      ".slick-thumbs img", ".swiper-thumbs img", ".product-gallery-thumbs img",
+      ".thumbnails img", ".pdp-thumbnails img",
+    ];
+    const mainImageSelectors = [
+      ".woocommerce-product-gallery__image img", ".product-main-image img",
+      ".product-image-main img", ".pdp-main-image img", ".main-image img",
+    ];
+
+    const collected = [];
+    try {
+      for (const thumbSel of thumbnailSelectors) {
+        const thumbs = await scraper.page.$$(thumbSel);
+        if (!thumbs.length) continue;
+
+        for (let i = 0; i < Math.min(thumbs.length, 12); i++) {
+          try {
+            await thumbs[i].click();
+            await scraper.sleep(400);
+            const src = await scraper.page.evaluate((selectors) => {
+              for (const sel of selectors) {
+                const el = document.querySelector(sel);
+                if (el) {
+                  const v = el.getAttribute("data-large_image") || el.getAttribute("data-src") || el.src;
+                  if (v) return v;
+                }
+              }
+              return null;
+            }, mainImageSelectors);
+            if (src) collected.push(new URL(src, scraper.page.url()).href);
+          } catch (e) {
+            // this particular thumbnail wasn't clickable, move on
+          }
+        }
+        break; // found a working thumbnail selector, no need to try the rest
+      }
+    } catch (e) {
+      // non-fatal — extraction still runs on whatever ProductExtractor found
+    }
+    return [...new Set(collected)];
   }
 
   parsePrice(value) {
