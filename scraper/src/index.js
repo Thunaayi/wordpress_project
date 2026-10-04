@@ -12,6 +12,7 @@ const {
   normalizeName,
   extractModelTokens,
   extractBrandFromName,
+  hasVariantMismatch,
 } = require("./utils/helpers");
 
 const TechpScraper = require("./scrapers/TechpScraper");
@@ -146,7 +147,21 @@ class ScraperOrchestrator {
 
     data.originalProduct = product;
     data.matchedName = product.name;
-    data.siteMatchConfidence = siteMatch.score;
+
+    // siteMatch.score only reflects the search-results snippet (link text or
+    // URL slug), which can be a generic blurb without the version/color that
+    // actually distinguishes this product — that's how a V3-White page slid
+    // through at 95% against a "V6 Black" request. Now that the real page is
+    // open, re-check the match against its ACTUAL title, which is the one
+    // place the true variant can't be hidden, and trust whichever score is
+    // more skeptical.
+    const pageNameScore = calculateSimilarity(product.name, data.name);
+    data.siteMatchConfidence = Math.min(siteMatch.score, pageNameScore);
+
+    if (hasVariantMismatch(normalizeName(product.name), normalizeName(data.name))) {
+      console.log("    Rejected: page title is \"" + data.name + "\" — variant mismatch against \"" + product.name + "\"");
+      return null;
+    }
 
     const wpMatch = this.findBestDBMatch(
       data.name || product.name,
