@@ -257,7 +257,18 @@ function calculateSimilarity(str1, str2) {
   // auto-confirmed against the wrong variant's page and photos.
   const variantMismatch = hasVariantMismatch(a, b);
 
-  if (a.includes(b) || b.includes(a)) return variantMismatch ? 0.4 : 0.95;
+  // The "one fully contains the other" shortcut only means something when
+  // the shorter string is actually a real chunk of a product name. Without a
+  // floor here, a stray "0" or "4" from a cart badge or quantity widget is a
+  // substring of almost anything with a number in it ("...240...") and was
+  // scoring 95% against a product it has nothing to do with. Real product
+  // names/slugs in this pipeline always run well past this length, so this
+  // only blocks noise, not legitimate short matches.
+  const MIN_CONTAINMENT_LENGTH = 8;
+  const shorterLength = Math.min(a.length, b.length);
+  if (shorterLength >= MIN_CONTAINMENT_LENGTH && (a.includes(b) || b.includes(a))) {
+    return variantMismatch ? 0.4 : 0.95;
+  }
 
   const tokensA = extractModelTokens(a);
   const tokensB = extractModelTokens(b);

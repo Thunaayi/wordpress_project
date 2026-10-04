@@ -278,9 +278,19 @@ class ScraperOrchestrator {
 
       if (config.productUrlPattern && config.productUrlPattern.test(parsed.pathname)) return true;
 
-      // Czone uses clean product slugs today, while older configs expected
-      // /product/*.aspx. Avoid category/account/cart pages.
+      // Czone's real product pages match config.productUrlPattern
+      // (slug-p.<id>.aspx), already checked above. The blanket "any .aspx
+      // URL" fallback this used to have was matching Cart.aspx, Login.aspx,
+      // Default.aspx and the like — those are real czone URLs and pass the
+      // host check, but they're not products. A page like that has nothing
+      // useful for calculateSimilarity to compare against, and whatever
+      // scrap of link text it does carry (a cart badge count, a nav label)
+      // can accidentally look like a match. Reject known non-product
+      // filenames explicitly instead of trusting ".aspx" alone.
       if (host === "czone.com.pk") {
+        const NON_PRODUCT_ASPX = /\/(default|cart|login|logon|register|signup|signin|wishlist|compare|checkout|myaccount|account|search|contactus|aboutus|sitemap|error|forgotpassword|basket|order|tracking)\.aspx$/i;
+        if (NON_PRODUCT_ASPX.test(parsed.pathname)) return false;
+
         return /\.aspx$/i.test(parsed.pathname) || (
           parsed.pathname.length > 8 &&
           !/^\/(products|product|category|categories|search|account|cart|checkout|login|contact|about|brand|brands|keyboard|mouse|graphic-cards|laptops)(\/|$)/i.test(parsed.pathname)
