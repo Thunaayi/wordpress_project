@@ -122,9 +122,19 @@ class ScraperOrchestrator {
     if (["msi", "pxn", "maxsun", "asus", "thermalright"].includes(brand)) add("pclab.pk");
     if (["ugreen", "a4tech", "bloody"].includes(brand)) add("tech.com.pk");
 
-    // Czone and PCLab have large current catalogs, so use them as the broad
-    // fallback rather than silently skipping unknown source brands.
-    add("czone.com.pk");
+    // czone.com.pk is deliberately NOT in this list. Its search.aspx
+    // endpoint 404s (confirmed by fetching it directly), and there's no
+    // evidence the brands in this pipeline are even carried there — it was
+    // added as an unverified guess and never actually confirmed working.
+    // Every product was paying 3 retries x 2 templates x 2 queries for a
+    // dead endpoint, 100% failure, zero matches, across the whole run. If
+    // you confirm the real search URL by hand (type a query into czone's
+    // actual search box and check the Network tab for the request it makes
+    // — it may be a JS/AJAX call, not a simple page you can GET), add it
+    // back to sites.js and re-add it here.
+
+    // PCLab has a large current catalog, so use it as the broad fallback
+    // rather than silently skipping unknown source brands.
     add("pclab.pk");
     add("tech.com.pk");
     add("techlad.pk");
@@ -233,13 +243,20 @@ class ScraperOrchestrator {
         for (const candidate of candidates) {
           if (!this.isLikelyProductUrl(candidate.href, scraper.siteConfig)) continue;
 
-          const score = Math.max(
-            calculateSimilarity(product.name, candidate.text),
-            calculateSimilarity(product.name, this.slugToName(candidate.href))
-          );
+          // Track which source actually produced the score, so the log says
+          // what was really compared instead of always printing the link's
+          // visible text — that text can be something like "Add to cart" or
+          // blank while the real match came from the URL slug, which was
+          // printing a confusing "Found on X: Add to cart" with no clue that
+          // the slug, not the button label, is what scored well.
+          const textScore = calculateSimilarity(product.name, candidate.text);
+          const slugName = this.slugToName(candidate.href);
+          const slugScore = calculateSimilarity(product.name, slugName);
+          const score = Math.max(textScore, slugScore);
+          const matchedText = slugScore >= textScore ? slugName : candidate.text;
 
           if (!best || score > best.score) {
-            best = { url: candidate.href, score, matchedText: candidate.text };
+            best = { url: candidate.href, score, matchedText };
           }
         }
 

@@ -64,11 +64,19 @@ class BaseScraper {
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const response = await this.page.goto(url, { 
-          waitUntil: "domcontentloaded", 
-          timeout 
+        const response = await this.page.goto(url, {
+          waitUntil: "domcontentloaded",
+          timeout
         });
-        if (response && response.ok()) {
+        // response.ok() is only true for 200-299. A 304 (Not Modified) means
+        // the browser's cache already has a valid copy of this exact page —
+        // that's success, not failure. Without this, revisiting the same
+        // product URL a second time in one run (common when several
+        // distributor SKUs land on the same page) would hit the disk cache,
+        // get a 304, get treated as a hard error, retry 3 times for nothing,
+        // and then fail that product outright — every time, forever, once
+        // the first visit primed the cache.
+        if (response && (response.ok() || response.status() === 304)) {
           return response;
         }
         throw new Error("HTTP " + response?.status());
