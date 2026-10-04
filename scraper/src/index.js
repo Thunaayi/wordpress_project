@@ -391,7 +391,14 @@ class ScraperOrchestrator {
     const imagePaths = await this.downloadProductImages(imageUrls, scraper.page.url(), imageIdentity, sku);
 
     return {
-      name: extracted.name || "Unknown",
+      // Display name comes from YOUR distributor list, not the scraped
+      // page's own title. The scraped title is still used upstream (in
+      // scrapeFromSite) to score the match and catch a color/version
+      // mismatch — but once a match is accepted, your source name is the
+      // ground truth for what this product is actually called, not however
+      // a given site's template happens to word its own listing.
+      name: (originalProduct && originalProduct.name) || extracted.name || "Unknown",
+      scrapedPageTitle: extracted.name || "",
       price: this.parsePrice(extracted.price),
       currency: extracted.currency || "PKR",
       description: extracted.description || "",
