@@ -221,7 +221,7 @@ class ScraperOrchestrator {
 
           const candidates = await scraper.page.$$eval("a[href]", (links, baseUrl) => {
           return links.map((link) => ({
-            text: (link.innerText || link.textContent || "").replace(/\\s+/g, " ").trim(),
+            text: (link.innerText || link.textContent || "").replace(/\s+/g, " ").trim(),
             href: (() => {
               try { return new URL(link.getAttribute("href"), baseUrl).href; }
               catch { return ""; }

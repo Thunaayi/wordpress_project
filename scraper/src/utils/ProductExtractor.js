@@ -15,7 +15,7 @@ const { URL } = require("url");
 class ProductExtractor {
   static async extract(page) {
     return page.evaluate(() => {
-      const clean = (value) => (value || "").replace(/\\s+/g, " ").trim();
+      const clean = (value) => (value || "").replace(/\s+/g, " ").trim();
       const first = (selectors) => {
         for (const selector of selectors) {
           const el = document.querySelector(selector);
@@ -109,7 +109,7 @@ class ProductExtractor {
           const srcset = attr(img, ["data-srcset", "srcset"]);
           if (srcset) {
             srcset.split(",").forEach((part) =>
-              found.push({ url: absolute(part.trim().split(/\\s+/)[0]), w: 0, h: 0 })
+              found.push({ url: absolute(part.trim().split(/\s+/)[0]), w: 0, h: 0 })
             );
           }
         });
