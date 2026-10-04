@@ -416,13 +416,33 @@ class ScraperOrchestrator {
         const urlHash = crypto.createHash("md5").update(url).digest("hex").substring(0, 8);
         const filename = slug + skuPart + "_" + (i + 1) + "_" + urlHash + this.getImageExtension(url);
         const savePath = path.join(baseDir, filename);
-        await this.downloadUrl(url, savePath, referer);
+        await this.downloadUrlWithRetry(url, savePath, referer);
         paths.push(filename);
       } catch (e) {
         console.error("    Image failed: " + e.message);
       }
     }
     return paths;
+  }
+
+  // A DNS blip or a dropped connection shouldn't cost a product all its
+  // photos — retry transient network failures (ENOTFOUND, ECONNRESET,
+  // ETIMEDOUT, a dropped connection) a couple of times before giving up.
+  // An HTTP error (404, etc.) isn't transient, so that fails immediately.
+  async downloadUrlWithRetry(url, savePath, referer, maxAttempts = 3) {
+    let lastError;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await this.downloadUrl(url, savePath, referer);
+      } catch (e) {
+        lastError = e;
+        const transient = /ENOTFOUND|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|socket hang up|Timeout/i.test(e.message || "");
+        if (!transient || attempt === maxAttempts) throw e;
+        console.log("    Image attempt " + attempt + "/" + maxAttempts + " failed (" + e.message + "), retrying...");
+        await new Promise((r) => setTimeout(r, 1000 * attempt));
+      }
+    }
+    throw lastError;
   }
 
   downloadUrl(url, savePath, referer, redirects = 0) {
