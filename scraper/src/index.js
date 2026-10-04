@@ -41,6 +41,53 @@ class ScraperOrchestrator {
     console.log("Loaded " + masterProducts.length + " master products");
     console.log("Loaded " + dbProducts.length + " WooCommerce products\n");
 
+    // Group by category so a run can be scoped to just one category at a
+    // time ("Cooling Solutions is done, move on to Monitors") instead of
+    // always working through all ~1187 products in one go.
+    const byCategory = {};
+    for (const product of masterProducts) {
+      const cat = (product.category || "Uncategorized").trim() || "Uncategorized";
+      if (!byCategory[cat]) byCategory[cat] = [];
+      byCategory[cat].push(product);
+    }
+    const categoryNames = Object.keys(byCategory).sort();
+
+    // Optional: node src/index.js "Cooling Solutions"  — restricts this run
+    // to one category (case-insensitive substring match). No argument runs
+    // every category, same as before, but still skips already-done products
+    // (see below).
+    const categoryFilter = (process.argv[2] || "").trim().toLowerCase();
+    const selectedCategories = categoryFilter
+      ? categoryNames.filter((c) => c.toLowerCase().includes(categoryFilter))
+      : categoryNames;
+
+    console.log("Categories available (" + categoryNames.length + "):");
+    for (const cat of categoryNames) {
+      const marker = selectedCategories.includes(cat) ? ">" : " ";
+      console.log("  " + marker + " " + cat + " (" + byCategory[cat].length + ")");
+    }
+    if (categoryFilter && !selectedCategories.length) {
+      console.log("\nNo category matches \"" + process.argv[2] + "\" — nothing to do.");
+      return;
+    }
+    console.log(
+      categoryFilter
+        ? "\nRunning category: " + selectedCategories.join(", ") + "\n"
+        : "\nRunning all categories (pass a category name as an argument to scope to just one, e.g. node src/index.js \"Cooling Solutions\")\n"
+    );
+
+    // Resume support: anything already recorded as confirmed, needsReview,
+    // or notFound in a PREVIOUS run is skipped entirely — it's already
+    // decided, there's no reason to re-visit the site and burn time on it
+    // again. Delete output/scraped_products.json (or an entry's product key
+    // from within it) if you deliberately want a product re-scraped.
+    const existing = this.loadExistingResults();
+    const alreadyDone = new Set([
+      ...existing.confirmed.map((d) => this.productKey(d.originalProduct)),
+      ...existing.needsReview.map((d) => this.productKey(d.originalProduct)),
+      ...existing.notFound.map((n) => this.productKey(n.product)),
+    ]);
+
     const scraperMap = {
       "tech.com.pk": new TechpScraper(),
       "techlad.pk": new TechladScraper(),
@@ -60,36 +107,76 @@ class ScraperOrchestrator {
       }
     }
 
-    const confirmed = [];
-    const needsReview = [];
-    const notFound = [];
+    // Running totals across the whole run (used for the final merged save);
+    // each category also gets its own output/by-category/<name>.json so you
+    // can review and apply one category at a time.
+    const confirmed = [...existing.confirmed];
+    const needsReview = [...existing.needsReview];
+    const notFound = [...existing.notFound];
 
-    for (let i = 0; i < masterProducts.length; i++) {
-      const product = masterProducts[i];
-      console.log("\n[" + (i + 1) + "/" + masterProducts.length + "] " + product.name);
+    for (const category of selectedCategories) {
+      const products = byCategory[category];
+      const catConfirmed = [];
+      const catReview = [];
+      const catNotFound = [];
 
-      try {
-        const candidates = this.getScrapersForProduct(product, scraperMap);
-        let result = null;
+      console.log("\n=== Category: " + category + " (" + products.length + " products) ===");
 
-        for (const scraper of candidates) {
-          result = await this.scrapeFromSite(scraper, product, dbProducts);
-          if (result && result.data) break;
+      for (let i = 0; i < products.length; i++) {
+        const product = products[i];
+        const key = this.productKey(product);
+
+        if (alreadyDone.has(key)) {
+          console.log("  [" + (i + 1) + "/" + products.length + "] " + product.name + " — already done, skipping");
+          continue;
         }
 
-        if (!result || !result.data) {
-          notFound.push({ product, reason: "No sufficiently good competitor match found" });
-        } else if (result.confirmed) {
-          confirmed.push(result.data);
-        } else {
-          needsReview.push(result.data);
+        console.log("\n  [" + (i + 1) + "/" + products.length + "] " + product.name);
+
+        try {
+          const candidates = this.getScrapersForProduct(product, scraperMap);
+          let result = null;
+
+          for (const scraper of candidates) {
+            result = await this.scrapeFromSite(scraper, product, dbProducts);
+            if (result && result.data) break;
+          }
+
+          if (!result || !result.data) {
+            const entry = { product, reason: "No sufficiently good competitor match found" };
+            notFound.push(entry);
+            catNotFound.push(entry);
+          } else if (result.confirmed) {
+            confirmed.push(result.data);
+            catConfirmed.push(result.data);
+          } else {
+            needsReview.push(result.data);
+            catReview.push(result.data);
+          }
+        } catch (e) {
+          console.error("  ERROR: " + e.message);
+          const entry = { product, reason: e.message };
+          notFound.push(entry);
+          catNotFound.push(entry);
         }
-      } catch (e) {
-        console.error("  ERROR: " + e.message);
-        notFound.push({ product, reason: e.message });
+
+        alreadyDone.add(key);
+        await this.sleep(REQUEST_DELAY_MS);
+
+        // Save after every product, not just at the end — runs on this scale
+        // get interrupted (Ctrl+C, a crash, a network drop), and losing
+        // everything back to the start of the category is the kind of waste
+        // this whole fix pass has been about avoiding.
+        if ((i + 1) % 10 === 0 || i === products.length - 1) {
+          this.saveAllResults(confirmed, needsReview, notFound);
+        }
       }
 
-      await this.sleep(REQUEST_DELAY_MS);
+      this.saveCategoryResults(category, catConfirmed, catReview, catNotFound);
+      console.log(
+        "  Category done — " + catConfirmed.length + " confirmed, " +
+        catReview.length + " need review, " + catNotFound.length + " not found"
+      );
     }
 
     for (const scraper of Object.values(scraperMap)) {
@@ -101,6 +188,55 @@ class ScraperOrchestrator {
     console.log("Confirmed: " + confirmed.length);
     console.log("Needs review: " + needsReview.length);
     console.log("Not found: " + notFound.length);
+  }
+
+  // A stable identity for a distributor product, independent of scrape
+  // results — same source + same name means same product, used to detect
+  // "already handled in a previous run" regardless of which site it
+  // eventually matched to.
+  productKey(product) {
+    if (!product) return "";
+    const source = String(product.source || product.sourceBrand || "").trim().toLowerCase();
+    const name = String(product.name || "").trim().toLowerCase();
+    return source + "||" + name;
+  }
+
+  loadExistingResults() {
+    const outputPath = path.join(__dirname, "../output/scraped_products.json");
+    if (!fs.existsSync(outputPath)) {
+      return { confirmed: [], needsReview: [], notFound: [] };
+    }
+    try {
+      const data = JSON.parse(fs.readFileSync(outputPath, "utf-8"));
+      return {
+        confirmed: data.confirmed || [],
+        needsReview: data.needsReview || [],
+        notFound: data.notFound || [],
+      };
+    } catch (e) {
+      console.error("Could not read existing output/scraped_products.json (" + e.message + ") — starting fresh");
+      return { confirmed: [], needsReview: [], notFound: [] };
+    }
+  }
+
+  saveCategoryResults(category, confirmed, needsReview, notFound) {
+    const outputDir = path.join(__dirname, "../output/by-category");
+    if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+
+    const filename = this.slugify(category) + ".json";
+    const output = {
+      category,
+      scrapedAt: new Date().toISOString(),
+      matchThreshold: MATCH_THRESHOLD,
+      totalConfirmed: confirmed.length,
+      totalNeedsReview: needsReview.length,
+      totalNotFound: notFound.length,
+      confirmed,
+      needsReview,
+      notFound,
+    };
+    fs.writeFileSync(path.join(outputDir, filename), JSON.stringify(output, null, 2));
+    console.log("  Saved output/by-category/" + filename);
   }
 
   getScrapersForProduct(product, scraperMap) {
@@ -511,7 +647,7 @@ class ScraperOrchestrator {
   async downloadProductImages(imageUrls, referer, productIdentity, sku) {
     if (!imageUrls.length) return [];
 
-    const baseDir = path.join(__dirname, "../../data/images");
+    const baseDir = path.join(__dirname, "../data/images");
     if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
 
     const slug = this.slugify(productIdentity);
@@ -610,7 +746,7 @@ class ScraperOrchestrator {
   }
 
   saveAllResults(confirmed, needsReview, notFound) {
-    const outputDir = path.join(__dirname, "../../output");
+    const outputDir = path.join(__dirname, "../output");
     if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
     const output = {
@@ -638,11 +774,17 @@ class ScraperOrchestrator {
 
 module.exports = ScraperOrchestrator;
 
-(async () => {
-  try {
-    await new ScraperOrchestrator().run();
-  } catch (e) {
-    console.error(e);
-    process.exitCode = 1;
-  }
-})();
+// Only auto-run when this file is executed directly (node src/index.js),
+// not when something else requires it — a plain require used to kick off
+// a full scrape as a side effect, which made the class impossible to test
+// or reuse in isolation.
+if (require.main === module) {
+  (async () => {
+    try {
+      await new ScraperOrchestrator().run();
+    } catch (e) {
+      console.error(e);
+      process.exitCode = 1;
+    }
+  })();
+}
