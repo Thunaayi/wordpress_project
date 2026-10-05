@@ -3,7 +3,7 @@ const SITES = {
     name: "tech.com.pk",
     baseUrl: "https://tech.com.pk",
     searchUrl: "https://tech.com.pk/?s={query}&post_type=product",
-    productUrlPattern: /\/product\/[\w-]+/,
+    productUrlPattern: /\/[^/]+-p\.\d+\.aspx$/i,
     selectors: {
       searchResults: ".productCard, .product-item, .product-card, .product-box",
       productLink: "a.productTitle, a[href*=\"/product/\"]",
@@ -41,7 +41,7 @@ const SITES = {
     productUrlPattern: /\/product\/[\w-]+/,
     selectors: {
       searchResults: ".product-item, .product-grid-item, .product-card",
-      productLink: "a[href*=\"/product/\"]",
+      productLink: "a[href*=\".aspx\"]",
       name: "h1.product-title, h1.product-name, .product-title",
       price: ".price, .product-price, .special-price, .price-box .price",
       originalPrice: ".old-price, .price-old, .was-price",
@@ -113,37 +113,39 @@ const SITES = {
   // return nothing instead of erroring — worth testing on 1 product first.
   czone: {
     name: "czone.com.pk",
-    baseUrl: "https://czone.com.pk",
-    searchUrl: "https://czone.com.pk/?s={query}&post_type=product",
-    productUrlPattern: /\/product\/[\w-]+/,
+    baseUrl: "https://www.czone.com.pk",
+    searchUrl: "https://www.czone.com.pk/search.aspx?search={query}",
+    searchUrls: [
+      "https://www.czone.com.pk/search.aspx?search={query}",
+      "https://www.czone.com.pk/?s={query}&post_type=product"
+    ],
+    productUrlPattern: /\\/[^/]+-p\\.\\d+\\.aspx$/i,
     selectors: {
-      searchResults: ".product-item, .product-grid-item, .product-card",
-      productLink: "a[href*=\"/product/\"]",
-      name: "h1.product-title, h1.product-name, .product-title",
-      price: ".price, .product-price, .special-price, .price-box .price",
+      searchResults: ".search-results, .product-list, .products",
+      productLink: "a[href*=\".aspx\"]",
+      name: "h1, .product-title, .product-name",
+      price: ".price, .product-price, .special-price",
       originalPrice: ".old-price, .price-old, .was-price",
-      description: ".product-description, .description, .product-details .description, .tab-content.description",
-      shortDescription: ".short-description, .product-short-description",
-      specsTable: ".specifications-table, .product-specifications table, .product-attributes table, .data-table",
+      description: ".description, .product-description, .product-details",
+      shortDescription: ".short-description, .product-description",
+      specsTable: "table, .specifications, .product-specifications",
       specsRows: "tr",
       specLabel: "th, td:first-child",
       specValue: "td:last-child, td:nth-child(2)",
-      specsList: ".specifications-list, .product-specs dl, .attributes-list",
-      specItem: "dt, .spec-label",
-      specValueDD: "dd, .spec-value",
-      mainImage: ".product-image img, .product-gallery img, .main-image img",
-      galleryImages: ".product-gallery img, .product-images img, .gallery img",
-      specsTab: "#specification, #specifications, .tab-specification",
-      breadcrumbs: ".breadcrumb, .breadcrumbs, .product-breadcrumb",
-      availability: ".stock, .availability, .in-stock, .out-of-stock",
-      brand: ".brand, .product-brand, .manufacturer",
-      sku: ".sku, .product-sku, .product-code",
+      specsList: ".specifications, .product-specs",
+      specItem: "dt, .label",
+      specValueDD: "dd, .value",
+      mainImage: "img",
+      galleryImages: "img",
+      specsTab: "",
+      breadcrumbs: ".breadcrumb, .breadcrumbs",
+      availability: ".stock, .availability",
+      brand: ".brand, .manufacturer",
+      sku: ".sku, .product-code"
     },
     searchSelectors: {
-      input: "input[name=\"q\"], input[name=\"search\"], #search, .search-input",
-      button: "button[type=\"submit\"], .search-btn, .search-button",
-      results: ".search-results, .products-grid, .product-listing",
-    },
+      results: ".search-results, .product-list, .products"
+    }
   },
 
   techmatched: {
