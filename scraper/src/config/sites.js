@@ -3,7 +3,7 @@ const SITES = {
     name: "tech.com.pk",
     baseUrl: "https://tech.com.pk",
     searchUrl: "https://tech.com.pk/?s={query}&post_type=product",
-    productUrlPattern: /\/product\/[\w-]+/,
+    productUrlPattern: /\/[^/]+-p\.\d+\.aspx$/i,
     selectors: {
       searchResults: ".productCard, .product-item, .product-card, .product-box",
       productLink: "a.productTitle, a[href*=\"/product/\"]",
@@ -41,7 +41,7 @@ const SITES = {
     productUrlPattern: /\/product\/[\w-]+/,
     selectors: {
       searchResults: ".product-item, .product-grid-item, .product-card",
-      productLink: "a[href*=\"/product/\"]",
+      productLink: "a[href*=\".aspx\"]",
       name: "h1.product-title, h1.product-name, .product-title",
       price: ".price, .product-price, .special-price, .price-box .price",
       originalPrice: ".old-price, .price-old, .was-price",
