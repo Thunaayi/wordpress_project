@@ -59,7 +59,7 @@ class BaseScraper {
   }
 
   async goto(url, options = {}) {
-    const maxRetries = 3;
+    const maxRetries = 4;
     const timeout = options.timeout || 60000;
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
