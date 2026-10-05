@@ -113,8 +113,8 @@ const SITES = {
   // return nothing instead of erroring — worth testing on 1 product first.
   czone: {
     name: "czone.com.pk",
-    baseUrl: "https://czone.com.pk",
-    searchUrl: "https://czone.com.pk/?s={query}&post_type=product",
+    baseUrl: "https://www.czone.com.pk",
+    searchUrl: "https://www.czone.com.pk/search.aspx?search={query}",\n    searchUrls: [\n      "https://www.czone.com.pk/search.aspx?search={query}",\n      "https://www.czone.com.pk/?s={query}&post_type=product"\n    ],
     productUrlPattern: /\/product\/[\w-]+/,
     selectors: {
       searchResults: ".product-item, .product-grid-item, .product-card",
