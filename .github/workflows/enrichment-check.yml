@@ -15,4 +15,3 @@ jobs:
           node-version: 20
       - run: npm ci
       - run: node --check src/enrich_new_products.js
-      - run: node -e "require('./src/enrich_new_products.js')" 
