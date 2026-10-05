@@ -207,23 +207,80 @@ function extractModelTokens(name) {
   return new Set(tokens.map(t => t.toLowerCase()));
 }
 
+// Two products can share every word except the one that actually makes them
+// different items — a color, a Tray/non-Tray CPU variant, a size. Plain
+// token/word overlap barely notices a one-word difference like that, which
+// is exactly how "... ARGB Black" and "... ARGB White" ended up scoring 95%
+// against the same page and getting the same photos. Each group below is a
+// set of mutually exclusive values: if both names mention a value from the
+// same group and the values differ, that's a real variant mismatch, not a
+// fuzzy-matching rounding error.
+const VARIANT_GROUPS = [
+  ["black", "white", "silver", "grey", "gray", "red", "blue", "green", "pink", "purple", "gold", "orange", "yellow"],
+  ["tray", "non-tray", "nontray", "box", "boxed"],
+  ["mk", "mkii", "mk2", "v1", "v2", "v3", "v4", "v5", "v6", "v7"],
+];
+
+function extractVariantTags(normalizedText) {
+  const tags = [];
+  for (const group of VARIANT_GROUPS) {
+    for (const value of group) {
+      const re = new RegExp("(?:^|\\s)" + value.replace(/[-]/g, "[-]?") + "(?:\\s|$)", "i");
+      if (re.test(normalizedText)) {
+        tags.push(value);
+        break; // one match per group is enough to know which value this name claims
+      }
+    }
+  }
+  return tags;
+}
+
+function hasVariantMismatch(a, b) {
+  const tagsA = extractVariantTags(a);
+  const tagsB = extractVariantTags(b);
+  for (const groupIndex in VARIANT_GROUPS) {
+    const group = VARIANT_GROUPS[groupIndex];
+    const tagA = tagsA.find((t) => group.includes(t));
+    const tagB = tagsB.find((t) => group.includes(t));
+    if (tagA && tagB && tagA !== tagB) return true;
+  }
+  return false;
+}
+
 function calculateSimilarity(str1, str2) {
   const a = normalizeName(str1);
   const b = normalizeName(str2);
-  
-  if (a.includes(b) || b.includes(a)) return 0.95;
-  
+
+  // A mismatched color/variant means these are two different SKUs no matter
+  // how much of the rest of the name lines up. Cap it well below
+  // MATCH_THRESHOLD so it always lands in needsReview instead of being
+  // auto-confirmed against the wrong variant's page and photos.
+  const variantMismatch = hasVariantMismatch(a, b);
+
+  // The "one fully contains the other" shortcut only means something when
+  // the shorter string is actually a real chunk of a product name. Without a
+  // floor here, a stray "0" or "4" from a cart badge or quantity widget is a
+  // substring of almost anything with a number in it ("...240...") and was
+  // scoring 95% against a product it has nothing to do with. Real product
+  // names/slugs in this pipeline always run well past this length, so this
+  // only blocks noise, not legitimate short matches.
+  const MIN_CONTAINMENT_LENGTH = 8;
+  const shorterLength = Math.min(a.length, b.length);
+  if (shorterLength >= MIN_CONTAINMENT_LENGTH && (a.includes(b) || b.includes(a))) {
+    return variantMismatch ? 0.4 : 0.95;
+  }
+
   const tokensA = extractModelTokens(a);
   const tokensB = extractModelTokens(b);
-  
+
   let intersection = 0;
   for (const t of tokensA) {
     if (tokensB.has(t)) intersection++;
   }
-  
+
   const union = tokensA.size + tokensB.size - intersection;
   const jaccard = union > 0 ? intersection / union : 0;
-  
+
   const wordsA = new Set(a.split(' ').filter(w => w.length > 3));
   const wordsB = new Set(b.split(' ').filter(w => w.length > 3));
   let wordIntersection = 0;
@@ -232,8 +289,9 @@ function calculateSimilarity(str1, str2) {
   }
   const wordUnion = wordsA.size + wordsB.size - wordIntersection;
   const wordJaccard = wordUnion > 0 ? wordIntersection / wordUnion : 0;
-  
-  return Math.max(jaccard * 0.7 + wordJaccard * 0.3, jaccard);
+
+  const score = Math.max(jaccard * 0.7 + wordJaccard * 0.3, jaccard);
+  return variantMismatch ? Math.min(score, 0.4) : score;
 }
 
 function calculateNewPrice(dealerPrice) {
@@ -251,13 +309,15 @@ function calculateNewPrice(dealerPrice) {
   else return Math.round(newPrice / 5000) * 5000;
 }
 
-module.exports = { 
-  loadMasterProducts, 
-  loadDBProducts, 
-  normalizeBrand, 
-  extractBrandFromName, 
-  normalizeName, 
-  extractModelTokens, 
-  calculateSimilarity, 
-  calculateNewPrice 
+module.exports = {
+  loadMasterProducts,
+  loadDBProducts,
+  normalizeBrand,
+  extractBrandFromName,
+  normalizeName,
+  extractModelTokens,
+  calculateSimilarity,
+  calculateNewPrice,
+  hasVariantMismatch,
+  extractVariantTags
 };

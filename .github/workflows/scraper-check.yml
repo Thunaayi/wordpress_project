@@ -1,0 +1,27 @@
+name: Scraper syntax check
+
+on:
+  push:
+    branches:
+      - main
+      - "fix/**"
+  pull_request:
+    paths:
+      - "scraper/**"
+      - ".github/workflows/scraper-check.yml"
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: scraper
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --check src/index.js
+      - run: node --check src/utils/ProductExtractor.js
+      - run: node --check src/config/sites.js
+      - run: node --check src/utils/helpers.js
