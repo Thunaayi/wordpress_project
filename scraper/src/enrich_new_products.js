@@ -501,6 +501,18 @@ function loadInventory() {
     .filter(p => p.name);
 }
 
+function loadPreviousResults() {
+  const file = path.join(OUTPUT_DIR, "enriched_products.json");
+  if (!fs.existsSync(file)) return new Map();
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    const rows = Array.isArray(parsed) ? parsed : (parsed.results || parsed.products || []);
+    return new Map(rows.map(r => [productKey(r), r]));
+  } catch {
+    return new Map();
+  }
+}
+
 function saveOutputs(results, inventory) {
   fs.mkdirSync(OUTPUT_DIR,{recursive:true});
   const byKey=new Map(results.map(r=>[productKey(r),r]));
@@ -536,6 +548,7 @@ async function main() {
   console.log("Minimum match: " + MIN_MATCH);
 
   const inventory = loadInventory();
+  const previous = loadPreviousResults();
   const targets = ONLY_MISSING ? inventory.filter(p => !p.existingImages || !p.existingDescription || !p.existingShortDescription) : inventory;
   console.log("Inventory: " + inventory.length);
   console.log("Targets: " + targets.length);
@@ -651,7 +664,7 @@ async function main() {
   }
 
   await browser.close();
-  saveOutputs(results, inventory);
+  const merged = new Map(previous);\n  for (const r of results) merged.set(productKey(r), r);\n  saveOutputs([...merged.values()], inventory);
 
   const counts = results.reduce((a, r) => {
     a[r.status] = (a[r.status] || 0) + 1;
