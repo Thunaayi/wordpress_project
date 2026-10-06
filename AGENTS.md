@@ -6,13 +6,13 @@ The repository contains a WordPress/WooCommerce catalogue and a competitor enric
 
 ### Product enrichment goal
 
-The inventory may contain thousands of products (currently about 3,014). The enrichment job finds competitor product pages and collects descriptions, specifications, images, matched retailer/source URL, match confidence, and the existing Techistics category.
+The inventory may contain thousands of products (currently about 3,014), but the enrichment job MUST NOT process all products by default. It targets only inventory products that are missing product images OR specifications. Existing complete products are left untouched. The job finds competitor product pages and collects descriptions, specifications, images, matched retailer/source URL, match confidence, and the existing Techistics category.
 
 The scraper must not silently drop products that cannot be matched.
 
 ### Status tracking
 
-Every inventory product must appear in scraper/output/product_enrichment_status.csv and scraper/output/product_enrichment_status.json.
+Only products selected for enrichment need to appear in the enrichment status reports. Do not create a 3,014-product enrichment queue merely for reporting.
 
 Statuses:
 - MATCHED — sufficiently confident competitor match.
@@ -20,10 +20,10 @@ Statuses:
 - MULTIPLE_MATCHES — reserved for multiple plausible retailer matches requiring review.
 - NO_MATCH — no sufficiently confident competitor match.
 - ERROR — processing failed unexpectedly.
-- PENDING — inventory product not processed in the current run.
+- PENDING — selected for enrichment but not processed in the current run.
 - SKIPPED — intentionally not processed, normally because the product is already complete.
 
-The status CSV should support filtering by category, retailer, match score, image count, and specification count.
+The status CSV should support filtering by category, retailer, match score, image count, and specification count. A product with existing images but missing specs, or existing specs but missing images, must still be selected.
 
 ### Output files
 
