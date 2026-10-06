@@ -612,9 +612,17 @@ async function main() {
         ? description.slice(0, 497).replace(/\s+\S*$/, "") + "..."
         : description;
 
+      const specs = data.specs || {};
+      const missing = [
+        !description ? "description" : "",
+        !Object.keys(specs).length ? "specifications" : "",
+        !images.length ? "images" : ""
+      ].filter(Boolean);
+
       results.push({
         ...target,
-        status: "MATCHED",
+        status: missing.length ? "PARTIAL" : "MATCHED",
+        reason: missing.length ? "Missing: " + missing.join(", ") : "",
         matchScore: Number(finalScore.toFixed(4)),
         source: best.source,
         sourceUrl: data.sourceUrl,
