@@ -345,6 +345,12 @@ async function extractProduct(page, url) {
     pushImage(meta("twitter:image"));
 
     document.querySelectorAll("img").forEach(img => {
+      const altText = (attr(img, "alt") + " " + attr(img, "title") + " " + attr(img, "class")).toLowerCase();
+      const width = Number(img.naturalWidth || img.width || 0);
+      const height = Number(img.naturalHeight || img.height || 0);
+      if (/(logo|favicon|icon|sprite|placeholder|no[-_ ]?image|loader|spinner|avatar|payment|trustpilot|whatsapp|facebook|instagram|twitter|youtube|badge|seal|captcha)/i.test(altText)) return;
+      if (width > 0 && height > 0 && (width < 120 || height < 120)) return;
+
       [
         "data-large_image","data-large-image","data-full","data-zoom-image",
         "data-src","data-lazy-src","data-original","src"
@@ -364,6 +370,17 @@ async function extractProduct(page, url) {
     const images = [...new Set(imageCandidates)].filter(u =>
       !/(logo|icon|avatar|payment|sprite|placeholder|loader|spinner|favicon|trustpilot)/i.test(u)
     );
+
+    if (!Object.keys(specs).length) {
+      let featureIndex = 1;
+      document.querySelectorAll("ul li, ol li").forEach(li => {
+        const value = text(li);
+        if (value.length >= 12 && value.length <= 500 &&
+            !/^(add to cart|buy now|in stock|out of stock|reviews?)/i.test(value)) {
+          addSpec("Feature " + featureIndex++, value);
+        }
+      });
+    }
 
     const price = p.offers?.price || p.offers?.[0]?.price ||
       firstText([".price", ".product-price", ".special-price", "[itemprop='price']"]) || "";
@@ -499,7 +516,7 @@ function loadPreviousResults() {
 function saveOutputs(results, inventory) {
   fs.mkdirSync(OUTPUT_DIR,{recursive:true});
   const byKey=new Map(results.map(r=>[productKey(r),r]));
-  const master=inventory.map(p=>byKey.get(productKey(p)) || {...p,status:"PENDING",reason:"Not processed yet"});
+  const targets=inventory.filter(p => !p.existingImages || !p.existingSpecs);\n  const master=targets.map(p=>byKey.get(productKey(p)) || {...p,status:"PENDING",reason:"Not processed yet"});
   const headers=["ID","SKU","Name","Category","Status","Match score","Matched retailer","Matched product","Matched URL","Images found","Specs found","Description found","Reason"];
   const rows=[headers.join(",")];
   for(const r of master) rows.push([r.id,r.sku,r.name,r.category||"",r.status||"PENDING",r.matchScore||0,r.source||"",r.sourceName||r.candidateName||"",r.sourceUrl||r.candidateUrl||"",(r.images||[]).length,Object.keys(r.specs||{}).length,r.description?"YES":"NO",r.reason||""].map(csvEscape).join(","));
