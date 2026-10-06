@@ -460,44 +460,27 @@ async function saveImages(urls, sourceUrl, id) {
   return saved;
 }
 
-function loadTargets() {
-  if (!fs.existsSync(INPUT_FILE)) throw new Error("Input CSV not found: " + INPUT_FILE);
-
-  const records = parse(fs.readFileSync(INPUT_FILE, "utf8"), {
-    columns: true,
-    skip_empty_lines: true,
-    relax_column_count: true,
-    bom: true
-  });
-
-  let products = records.map(r => ({
-    id: clean(r.ID || r.id),
-    sku: clean(r.SKU || r.sku),
-    name: clean(r.Name || r.name),
-    category: clean(r.Categories || r.Category || r.category),
-    existingImages: clean(r.Images || r.images),
-    existingDescription: clean(r.Description || r.description),
-    existingShortDescription: clean(r["Short description"] || r.ShortDescription || "")
-  })).filter(p => p.name);
-
-  if (ONLY_MISSING) {
-    products = products.filter(p =>
-      !p.existingImages || !p.existingDescription || !p.existingShortDescription
-    );
-  }
-
-  if (START) products = products.slice(START);
-  if (LIMIT) products = products.slice(0, LIMIT);
-
-  return products;
-}
-
 function productKey(p) { return p.id || p.sku || normalize(p.name); }
+
+function hasExistingSpecs(row) {
+  const entries = Object.entries(row);
+  const specColumns = entries.filter(([key]) =>
+    /^(attribute\s*\d+\s*(name|value)|specifications?|specs?|features?|technical\s*details?)$/i.test(String(key).trim())
+  );
+  if (specColumns.some(([, value]) => clean(value))) return true;
+
+  // WooCommerce exports sometimes use "Attribute 1 name/value" and numbered
+  // columns with different spacing/casing.
+  const attributeValues = entries.filter(([key, value]) =>
+    /attribute\s*\d+\s*(name|value)/i.test(String(key)) && clean(value)
+  );
+  return attributeValues.length >= 2;
+}
 
 function loadInventory() {
   if (!fs.existsSync(INPUT_FILE)) throw new Error("Input CSV not found: " + INPUT_FILE);
   return parse(fs.readFileSync(INPUT_FILE, "utf8"), { columns:true, skip_empty_lines:true, relax_column_count:true, bom:true })
-    .map((r,i) => ({ index:i, id:clean(r.ID||r.id), sku:clean(r.SKU||r.sku), name:clean(r.Name||r.name), category:clean(r.Categories||r.Category||r.category), existingImages:clean(r.Images||r.images), existingDescription:clean(r.Description||r.description), existingShortDescription:clean(r["Short description"]||r.ShortDescription||"") }))
+    .map((r,i) => ({ index:i, raw:r, id:clean(r.ID||r.id), sku:clean(r.SKU||r.sku), name:clean(r.Name||r.name), category:clean(r.Categories||r.Category||r.category), existingImages:clean(r.Images||r.images), existingDescription:clean(r.Description||r.description), existingShortDescription:clean(r["Short description"]||r.ShortDescription||""), existingSpecs:hasExistingSpecs(r) }))
     .filter(p => p.name);
 }
 
@@ -549,7 +532,7 @@ async function main() {
 
   const inventory = loadInventory();
   const previous = loadPreviousResults();
-  const targets = ONLY_MISSING ? inventory.filter(p => !p.existingImages || !p.existingDescription || !p.existingShortDescription) : inventory;
+  const targets = ONLY_MISSING ? inventory.filter(p => !p.existingImages || !p.existingSpecs) : inventory;
   console.log("Inventory: " + inventory.length);
   console.log("Targets: " + targets.length);
 
@@ -591,7 +574,8 @@ async function main() {
     }
 
     if (!best || best.score < MIN_MATCH) {
-      const webCandidate = await webSearch(page, target.name);
+      const searchTerm = target.sku && target.sku.length >= 4 ? target.sku : target.name;
+      const webCandidate = await webSearch(page, searchTerm);
       if (webCandidate && (!best || webCandidate.score > best.score)) best = webCandidate;
     }
 
@@ -600,7 +584,7 @@ async function main() {
       results.push({
         ...target, status: "NO_MATCH",
         matchScore: best ? best.score : 0,
-        candidateUrl: best?.url || "", candidateName: best?.matchedText || ""
+        candidateUrl: best?.url || "", candidateName: best?.matchedText || "", reason: "No sufficiently confident product-page match"
       });
       continue;
     }
@@ -609,9 +593,11 @@ async function main() {
       console.log("    " + best.source + " " + best.score.toFixed(2) + " -> " + best.url);
       const data = await extractProduct(page, best.url);
       const pageScore = scoreMatch(target.name, data.name);
-      const finalScore = Math.max(best.score, pageScore);
+      const genericPage = /^(home|shop|products?|brands?|categories?|category|search|corsair|lian li|a4tech)$/i.test(clean(data.name));
+      const finalScore = pageScore;
+      const candidateSearchScore = best.score;
 
-      if (finalScore < MIN_MATCH) {
+      if (genericPage || finalScore < MIN_MATCH) {
         results.push({
           ...target, status: "PARTIAL", matchScore: finalScore,
           source: best.source, sourceUrl: data.sourceUrl, candidateName: data.name
@@ -675,6 +661,7 @@ async function main() {
 
   console.log("\n=== COMPLETE ===");
   console.log(JSON.stringify(counts, null, 2));
+  console.log("Status: scraper/output/product_enrichment_status.csv");
   console.log("Output: scraper/output/enriched_products_woocommerce.csv");
   console.log("Details: scraper/output/enriched_products.json");
 }
