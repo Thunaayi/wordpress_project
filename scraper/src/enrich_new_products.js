@@ -492,37 +492,41 @@ function loadTargets() {
   return products;
 }
 
-function saveOutputs(results) {
-  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+function productKey(p) { return p.id || p.sku || normalize(p.name); }
 
-  fs.writeFileSync(
-    path.join(OUTPUT_DIR, "enriched_products.json"),
-    JSON.stringify({ generatedAt: new Date().toISOString(), total: results.length, results }, null, 2)
-  );
+function loadInventory() {
+  if (!fs.existsSync(INPUT_FILE)) throw new Error("Input CSV not found: " + INPUT_FILE);
+  return parse(fs.readFileSync(INPUT_FILE, "utf8"), { columns:true, skip_empty_lines:true, relax_column_count:true, bom:true })
+    .map((r,i) => ({ index:i, id:clean(r.ID||r.id), sku:clean(r.SKU||r.sku), name:clean(r.Name||r.name), category:clean(r.Categories||r.Category||r.category), existingImages:clean(r.Images||r.images), existingDescription:clean(r.Description||r.description), existingShortDescription:clean(r["Short description"]||r.ShortDescription||"") }))
+    .filter(p => p.name);
+}
 
-  const headers = [
-    "ID","SKU","Name","Short description","Description","Images",
-    "Specifications","Source URL","Source","Match score","Status"
-  ];
-  const rows = [headers.join(",")];
+function saveOutputs(results, inventory) {
+  fs.mkdirSync(OUTPUT_DIR,{recursive:true});
+  const byKey=new Map(results.map(r=>[productKey(r),r]));
+  const master=inventory.map(p=>byKey.get(productKey(p)) || {...p,status:"PENDING",reason:"Not processed yet"});
+  const headers=["ID","SKU","Name","Category","Status","Match score","Matched retailer","Matched product","Matched URL","Images found","Specs found","Description found","Reason"];
+  const rows=[headers.join(",")];
+  for(const r of master) rows.push([r.id,r.sku,r.name,r.category||"",r.status||"PENDING",r.matchScore||0,r.source||"",r.sourceName||r.candidateName||"",r.sourceUrl||r.candidateUrl||"",(r.images||[]).length,Object.keys(r.specs||{}).length,r.description?"YES":"NO",r.reason||""].map(csvEscape).join(","));
+  fs.writeFileSync(STATUS_FILE,rows.join("\n")+"\n");
+  fs.writeFileSync(MASTER_JSON,JSON.stringify({generatedAt:new Date().toISOString(),total:master.length,products:master},null,2));
 
-  for (const r of results) {
-    rows.push([
-      r.id, r.sku, r.name, r.shortDescription || "", r.description || "",
-      (r.images || []).join(", "), JSON.stringify(r.specs || {}),
-      r.sourceUrl || "", r.source || "", r.matchScore || 0, r.status || ""
-    ].map(csvEscape).join(","));
+  const groups=["MATCHED","PARTIAL","MULTIPLE_MATCHES","NO_MATCH","ERROR","PENDING","SKIPPED"];
+  for(const group of groups){
+    const out=[headers.join(",")];
+    for(const r of master.filter(x=>x.status===group)) out.push([r.id,r.sku,r.name,r.category||"",r.status,r.matchScore||0,r.source||"",r.sourceName||r.candidateName||"",r.sourceUrl||r.candidateUrl||"",(r.images||[]).length,Object.keys(r.specs||{}).length,r.description?"YES":"NO",r.reason||""].map(csvEscape).join(","));
+    fs.writeFileSync(path.join(OUTPUT_DIR,group.toLowerCase()+".csv"),out.join("\n")+"\n");
   }
-  fs.writeFileSync(path.join(OUTPUT_DIR, "enriched_products.csv"), rows.join("\n") + "\n");
 
-  const wcRows = [["ID","SKU","Name","Short description","Description","Images"].join(",")];
-  for (const r of results.filter(x => x.status === "matched" && x.id)) {
-    wcRows.push([
-      r.id, r.sku, r.name, r.shortDescription || "", r.description || "",
-      (r.images || []).join(", ")
-    ].map(csvEscape).join(","));
-  }
-  fs.writeFileSync(path.join(OUTPUT_DIR, "enriched_products_woocommerce.csv"), wcRows.join("\n") + "\n");
+  const detailed=["ID","SKU","Name","Category","Short description","Description","Images","Specifications","Source URL","Source","Match score","Status","Reason"];
+  const detailRows=[detailed.join(",")];
+  for(const r of master) detailRows.push([r.id,r.sku,r.name,r.category||"",r.shortDescription||"",r.description||"",(r.images||[]).join(", "),JSON.stringify(r.specs||{}),r.sourceUrl||"",r.source||"",r.matchScore||0,r.status||"",r.reason||""].map(csvEscape).join(","));
+  fs.writeFileSync(path.join(OUTPUT_DIR,"enriched_products.csv"),detailRows.join("\n")+"\n");
+
+  const wc=["ID","SKU","Name","Short description","Description","Images"].join(",")+"\n"+master.filter(x=>x.status==="MATCHED"&&x.id).map(r=>[r.id,r.sku,r.name,r.shortDescription||"",r.description||"",(r.images||[]).join(", ")].map(csvEscape).join(",")).join("\n");
+  fs.writeFileSync(path.join(OUTPUT_DIR,"enriched_products_woocommerce.csv"),wc+"\n");
+  fs.writeFileSync(path.join(OUTPUT_DIR,"enriched_products.json"),JSON.stringify({generatedAt:new Date().toISOString(),total:master.length,results:master},null,2));
+  return master;
 }
 
 async function main() {
@@ -531,7 +535,9 @@ async function main() {
   console.log("Mode: " + (ONLY_MISSING ? "missing fields only" : "all products"));
   console.log("Minimum match: " + MIN_MATCH);
 
-  const targets = loadTargets();
+  const inventory = loadInventory();
+  const targets = ONLY_MISSING ? inventory.filter(p => !p.existingImages || !p.existingDescription || !p.existingShortDescription) : inventory;
+  console.log("Inventory: " + inventory.length);
   console.log("Targets: " + targets.length);
 
   if (!targets.length) {
@@ -579,7 +585,7 @@ async function main() {
     if (!best || best.score < MIN_MATCH) {
       console.log("    NOT FOUND (best: " + (best ? best.score.toFixed(2) : "none") + ")");
       results.push({
-        ...target, status: "not_found",
+        ...target, status: "NO_MATCH",
         matchScore: best ? best.score : 0,
         candidateUrl: best?.url || "", candidateName: best?.matchedText || ""
       });
@@ -594,7 +600,7 @@ async function main() {
 
       if (finalScore < MIN_MATCH) {
         results.push({
-          ...target, status: "review", matchScore: finalScore,
+          ...target, status: "PARTIAL", matchScore: finalScore,
           source: best.source, sourceUrl: data.sourceUrl, candidateName: data.name
         });
         continue;
@@ -608,7 +614,7 @@ async function main() {
 
       results.push({
         ...target,
-        status: "matched",
+        status: "MATCHED",
         matchScore: Number(finalScore.toFixed(4)),
         source: best.source,
         sourceUrl: data.sourceUrl,
@@ -630,14 +636,14 @@ async function main() {
     } catch (e) {
       console.log("    ERROR: " + e.message);
       results.push({
-        ...target, status: "error", error: e.message,
+        ...target, status: "ERROR", error: e.message,
         source: best.source, sourceUrl: best.url, matchScore: best.score
       });
     }
   }
 
   await browser.close();
-  saveOutputs(results);
+  saveOutputs(results, inventory);
 
   const counts = results.reduce((a, r) => {
     a[r.status] = (a[r.status] || 0) + 1;
