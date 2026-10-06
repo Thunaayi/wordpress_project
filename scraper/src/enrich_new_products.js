@@ -591,9 +591,16 @@ async function main() {
     }
 
     if (!best || best.score < MIN_MATCH) {
-      const searchTerm = target.sku && target.sku.length >= 4 ? target.sku : target.name;
-      const webCandidate = await webSearch(page, searchTerm);
-      if (webCandidate && (!best || webCandidate.score > best.score)) best = webCandidate;
+      const searchTerms = [
+        target.sku && target.sku.length >= 4 ? target.sku : "",
+        target.name.replace(/\b(price|in pakistan|pakistan|black|white|rgb|argb)\b/gi, "").replace(/\s+/g, " ").trim(),
+        target.name
+      ].filter(Boolean);
+
+      for (const term of searchTerms) {
+        const webCandidate = await webSearch(page, term);
+        if (webCandidate && (!best || webCandidate.score > best.score)) best = webCandidate;
+      }
     }
 
     if (!best || best.score < MIN_MATCH) {
