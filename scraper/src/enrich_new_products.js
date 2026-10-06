@@ -16,6 +16,8 @@ const INPUT_FILE = process.env.ENRICH_INPUT
 const LIMIT = Number(process.env.ENRICH_LIMIT || 0);
 const START = Number(process.env.ENRICH_START || 0);
 const ONLY_MISSING = process.env.ENRICH_ALL !== "1";
+const STATUS_FILE = path.join(OUTPUT_DIR, "product_enrichment_status.csv");
+const MASTER_JSON = path.join(OUTPUT_DIR, "product_enrichment_status.json");
 const MIN_MATCH = Number(process.env.ENRICH_MIN_MATCH || 0.72);
 
 const SOURCES = [
@@ -299,23 +301,33 @@ async function extractProduct(page, url) {
     });
 
     document.querySelectorAll("dl").forEach(dl => {
-      const dts = [...dl.querySelectorAll("dt")];
-      for (const dt of dts) {
+      [...dl.querySelectorAll("dt")].forEach(dt => {
         let dd = dt.nextElementSibling;
         while (dd && dd.tagName !== "DD") dd = dd.nextElementSibling;
         if (dd) addSpec(dt, dd);
+      });
+    });
+
+    document.querySelectorAll(".woocommerce-product-attributes-item,.product-attribute,.product_attribute,.attribute,.specification,.specifications li,.specs li,.product-specs li,.product-specification,.product-specifications li,.spec-row,.spec-item,.specification-row,.specification-item,.technical-specifications li,.technical-specs li,.product-details li,.product-info li,.accordion-item,.tab-pane li").forEach(row => {
+      const cells = [...row.querySelectorAll("th,td,.label,.value,.name,.attribute-label,.attribute-value,.woocommerce-product-attributes-item__label,.woocommerce-product-attributes-item__value,[class*=\"label\"],[class*=\"value\"],[class*=\"name\"]")].map(text).filter(Boolean);
+      if (cells.length >= 2) addSpec(cells[0], cells.slice(1).join(" "));
+      else {
+        const m = text(row).match(/^([^:：|]{2,100})\s*[:：|]\s*(.{2,1000})$/);
+        if (m) addSpec(m[1], m[2]);
       }
     });
 
-    document.querySelectorAll(
-      ".woocommerce-product-attributes-item, .product-attribute, .attribute, .specification, .specifications li, .specs li, .product-specs li"
-    ).forEach(row => {
-      const cells = [...row.querySelectorAll("th,td,.label,.value,.name,.attribute-label,.attribute-value")].map(text).filter(Boolean);
-      if (cells.length >= 2) addSpec(cells[0], cells.slice(1).join(" "));
-      else {
-        const raw = text(row);
-        const m = raw.match(/^([^:]{2,80}):\s*(.{2,500})$/);
-        if (m) addSpec(m[1], m[2]);
+    [...document.querySelectorAll("h2,h3,h4,h5,strong,b")].filter(el => /specifications?|technical details?|product details?|features?/i.test(text(el))).forEach(heading => {
+      let node = heading.nextElementSibling;
+      for (let i = 0; node && i < 8; i++, node = node.nextElementSibling) {
+        node.querySelectorAll?.("tr").forEach(row => {
+          const cells = [...row.querySelectorAll("th,td")].map(text).filter(Boolean);
+          if (cells.length >= 2) addSpec(cells[0], cells.slice(1).join(" "));
+        });
+        node.querySelectorAll?.("li").forEach(li => {
+          const m = text(li).match(/^([^:：|]{2,100})\s*[:：|]\s*(.{2,1000})$/);
+          if (m) addSpec(m[1], m[2]);
+        });
       }
     });
 
