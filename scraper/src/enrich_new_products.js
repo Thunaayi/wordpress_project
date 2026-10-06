@@ -664,7 +664,9 @@ async function main() {
   }
 
   await browser.close();
-  const merged = new Map(previous);\n  for (const r of results) merged.set(productKey(r), r);\n  saveOutputs([...merged.values()], inventory);
+  const merged = new Map(previous);
+  for (const r of results) merged.set(productKey(r), r);
+  saveOutputs([...merged.values()], inventory);
 
   const counts = results.reduce((a, r) => {
     a[r.status] = (a[r.status] || 0) + 1;
