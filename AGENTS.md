@@ -25,6 +25,8 @@ Statuses:
 
 The status CSV should support filtering by category, retailer, match score, image count, and specification count. A product with existing images but missing specs, or existing specs but missing images, must still be selected.
 
+Progress must persist across runs. A previously enriched product with status MATCHED or SKIPPED must not be reprocessed on the next run. PARTIAL, NO_MATCH, and ERROR products remain retryable. Batch limits and interruptions must not lose completed results.
+
 ### Output files
 
 - output/product_enrichment_status.csv — master tracking report for the whole inventory.
@@ -33,7 +35,7 @@ The status CSV should support filtering by category, retailer, match score, imag
 - output/enriched_products.csv — detailed enrichment data.
 - output/enriched_products.json — detailed JSON results.
 - output/enriched_products_woocommerce.csv — matched products formatted for later WooCommerce import.
-- data/images/ — downloaded product images.
+- data/images/ — downloaded product images. Image files should use descriptive, filesystem-safe product-name slugs (plus a stable product ID when available), not opaque names such as product_12313.jpg. Multiple images for one product should use a deterministic suffix such as -1, -2, etc.
 
 Do not overwrite the original Techistics catalogue as part of enrichment.
 
