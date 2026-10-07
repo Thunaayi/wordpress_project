@@ -136,11 +136,22 @@ function queryVariants(name) {
   return [...new Set(variants.map(clean).filter(Boolean))];
 }
 
+function searchTermsForTarget(target) {
+  const terms = [];
+  if (target.sku && target.sku.length >= 4) terms.push(target.sku);
+  terms.push(...queryVariants(target.name));
+  return [...new Set(terms.map(clean).filter(Boolean))];
+}
+
+function looksLikeGenericProductName(name) {
+  return /^(home|shop|products?|brands?|categories?|category|search|corsair|lian li|a4tech|zalman|cooler master|deepcool|asus|msi|gigabyte|kingston|logitech)$/i.test(clean(name));
+}
+
 function isProductUrl(href, domain) {
   try {
     const u = new URL(href);
     if (!u.hostname.includes(domain)) return false;
-    if (/cart|checkout|my-account|login|wishlist|compare|feed|tag|category|author/i.test(u.pathname)) return false;
+    if (/cart|checkout|my-account|login|wishlist|compare|feed|tag|category|categories|product-category|author|brand|brands|shop|search/i.test(u.pathname)) return false;
     return u.protocol === "http:" || u.protocol === "https:";
   } catch {
     return false;
@@ -517,7 +528,10 @@ function loadPreviousResults() {
   try {
     const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
     const rows = Array.isArray(parsed) ? parsed : (parsed.results || parsed.products || []);
-    return new Map(rows.map(r => [productKey(r), r]));
+    return new Map(rows.map(r => [productKey(r), {
+      ...r,
+      status: String(r.status || "").toUpperCase()
+    }]));
   } catch {
     return new Map();
   }
@@ -563,7 +577,8 @@ async function main() {
   const candidateTargets = ONLY_MISSING ? inventory.filter(p => !p.existingImages || !p.existingSpecs) : inventory;
   const targets = candidateTargets.filter(p => {
     const prior = previous.get(productKey(p));
-    return !prior || !["MATCHED", "SKIPPED"].includes(prior.status);
+    const priorStatus = String(prior?.status || "").toUpperCase();
+    return !prior || !["MATCHED", "SKIPPED"].includes(priorStatus);
   });
   console.log("Inventory: " + inventory.length);
   console.log("Missing-field candidates: " + candidateTargets.length);
@@ -600,22 +615,36 @@ async function main() {
 
     let best = null;
 
-    for (const source of SOURCES) {
-      const candidate = await searchSite(page, source, target.name);
-      if (candidate && (!best || candidate.score > best.score)) best = candidate;
-      if (best && best.score >= 0.94) break;
+    const searchTerms = searchTermsForTarget(target);
+
+    // SKU/model searches are much safer than broad product-name searches.
+    for (const term of searchTerms.slice(0, 1)) {
+      for (const source of SOURCES) {
+        const candidate = await searchSite(page, source, term);
+        if (candidate && (!best || candidate.score > best.score)) best = candidate;
+        if (best && best.score >= 0.96) break;
+      }
+      if (best && best.score >= 0.96) break;
     }
 
-    if (!best || best.score < MIN_MATCH) {
-      const searchTerms = [
-        target.sku && target.sku.length >= 4 ? target.sku : "",
-        target.name.replace(/\b(price|in pakistan|pakistan|black|white|rgb|argb)\b/gi, "").replace(/\s+/g, " ").trim(),
-        target.name
-      ].filter(Boolean);
+    // Fall back to product-name searches when the SKU is not indexed.
+    if (!best || best.score < 0.92) {
+      for (const term of searchTerms.slice(target.sku && target.sku.length >= 4 ? 1 : 0)) {
+        for (const source of SOURCES) {
+          const candidate = await searchSite(page, source, term);
+          if (candidate && (!best || candidate.score > best.score)) best = candidate;
+          if (best && best.score >= 0.96) break;
+        }
+        if (best && best.score >= 0.96) break;
+      }
+    }
 
+    // External search is a last resort, not the first matcher.
+    if (!best || best.score < MIN_MATCH) {
       for (const term of searchTerms) {
         const webCandidate = await webSearch(page, term);
         if (webCandidate && (!best || webCandidate.score > best.score)) best = webCandidate;
+        if (best && best.score >= 0.92) break;
       }
     }
 
@@ -631,18 +660,41 @@ async function main() {
 
     try {
       console.log("    " + best.source + " " + best.score.toFixed(2) + " -> " + best.url);
-      const data = await extractProduct(page, best.url);
+      let data = await extractProduct(page, best.url);
       const pageScore = scoreMatch(target.name, data.name);
-      const genericPage = /^(home|shop|products?|brands?|categories?|category|search|corsair|lian li|a4tech)$/i.test(clean(data.name));
+      const genericPage = looksLikeGenericProductName(data.name);
       const finalScore = pageScore;
       const candidateSearchScore = best.score;
 
       if (genericPage || finalScore < MIN_MATCH) {
-        results.push({
-          ...target, status: "PARTIAL", matchScore: finalScore,
-          source: best.source, sourceUrl: data.sourceUrl, candidateName: data.name
-        });
-        continue;
+        console.log("    REJECTED CANDIDATE | page title: " + clean(data.name) + " | score " + finalScore.toFixed(2));
+
+        let fallback = null;
+        const retryTerms = searchTermsForTarget(target);
+        for (const term of retryTerms) {
+          const candidate = await webSearch(page, term);
+          if (!candidate || candidate.url === best.url || candidate.score < MIN_MATCH) continue;
+          try {
+            const retryData = await extractProduct(page, candidate.url);
+            const retryScore = scoreMatch(target.name, retryData.name);
+            if (!looksLikeGenericProductName(retryData.name) && retryScore >= MIN_MATCH) {
+              fallback = { ...candidate, data: retryData, score: retryScore };
+              break;
+            }
+          } catch {}
+        }
+
+        if (!fallback) {
+          results.push({
+            ...target, status: "NO_MATCH", matchScore: finalScore,
+            source: best.source, candidateUrl: best.url, candidateName: data.name,
+            reason: "Candidate rejected: generic/non-product page or insufficient product-title match"
+          });
+          continue;
+        }
+
+        best = fallback;
+        data = fallback.data;
       }
 
       const images = await saveImages(data.images, data.sourceUrl, target.name, target.id || i + 1);
