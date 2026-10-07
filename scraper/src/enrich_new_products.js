@@ -663,8 +663,7 @@ async function main() {
       let data = await extractProduct(page, best.url);
       const pageScore = scoreMatch(target.name, data.name);
       const genericPage = looksLikeGenericProductName(data.name);
-      const finalScore = pageScore;
-      const candidateSearchScore = best.score;
+      let finalScore = pageScore;
 
       if (genericPage || finalScore < MIN_MATCH) {
         console.log("    REJECTED CANDIDATE | page title: " + clean(data.name) + " | score " + finalScore.toFixed(2));
@@ -695,6 +694,7 @@ async function main() {
 
         best = fallback;
         data = fallback.data;
+        finalScore = fallback.score;
       }
 
       const images = await saveImages(data.images, data.sourceUrl, target.name, target.id || i + 1);
