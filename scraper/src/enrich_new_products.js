@@ -452,16 +452,26 @@ function fetchBinary(url, referer, redirects = 0) {
   });
 }
 
-async function saveImages(urls, sourceUrl, id) {
+function imageSlug(name) {
+  return normalize(name)
+    .replace(/\b(price|in pakistan|pakistan)\b/g, " ")
+    .replace(/\s+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120) || "product";
+}
+
+async function saveImages(urls, sourceUrl, productName, productId) {
   const dir = path.join(DATA_DIR, "images");
   fs.mkdirSync(dir, { recursive: true });
   const saved = [];
+  const base = imageSlug(productName);
+  const identity = productId ? "-" + imageSlug(String(productId)) : "";
 
   for (let i = 0; i < Math.min(urls.length, 8); i++) {
     const url = normalizeImageUrl(urls[i]);
     if (!url) continue;
 
-    const filename = "product_" + id + "_" + i + extension(url);
+    const filename = base + identity + (i ? "-" + i : "") + extension(url);
     const savePath = path.join(dir, filename);
 
     try {
@@ -516,7 +526,8 @@ function loadPreviousResults() {
 function saveOutputs(results, inventory) {
   fs.mkdirSync(OUTPUT_DIR,{recursive:true});
   const byKey=new Map(results.map(r=>[productKey(r),r]));
-  const targets=inventory.filter(p => !p.existingImages || !p.existingSpecs);\n  const master=targets.map(p=>byKey.get(productKey(p)) || {...p,status:"PENDING",reason:"Not processed yet"});
+  const targets=inventory.filter(p => !p.existingImages || !p.existingSpecs);
+  const master=targets.map(p=>byKey.get(productKey(p)) || {...p,status:"PENDING",reason:"Not processed yet"});
   const headers=["ID","SKU","Name","Category","Status","Match score","Matched retailer","Matched product","Matched URL","Images found","Specs found","Description found","Reason"];
   const rows=[headers.join(",")];
   for(const r of master) rows.push([r.id,r.sku,r.name,r.category||"",r.status||"PENDING",r.matchScore||0,r.source||"",r.sourceName||r.candidateName||"",r.sourceUrl||r.candidateUrl||"",(r.images||[]).length,Object.keys(r.specs||{}).length,r.description?"YES":"NO",r.reason||""].map(csvEscape).join(","));
@@ -549,9 +560,14 @@ async function main() {
 
   const inventory = loadInventory();
   const previous = loadPreviousResults();
-  const targets = ONLY_MISSING ? inventory.filter(p => !p.existingImages || !p.existingSpecs) : inventory;
+  const candidateTargets = ONLY_MISSING ? inventory.filter(p => !p.existingImages || !p.existingSpecs) : inventory;
+  const targets = candidateTargets.filter(p => {
+    const prior = previous.get(productKey(p));
+    return !prior || !["MATCHED", "SKIPPED"].includes(prior.status);
+  });
   console.log("Inventory: " + inventory.length);
-  console.log("Targets: " + targets.length);
+  console.log("Missing-field candidates: " + candidateTargets.length);
+  console.log("To process this run: " + targets.length);
 
   if (!targets.length) {
     console.log("No target products found. If these are not blank yet, run with ENRICH_ALL=1.");
@@ -629,7 +645,7 @@ async function main() {
         continue;
       }
 
-      const images = await saveImages(data.images, data.sourceUrl, target.id || i + 1);
+      const images = await saveImages(data.images, data.sourceUrl, target.name, target.id || i + 1);
       const description = clean(data.description);
       const shortDescription = description.length > 500
         ? description.slice(0, 497).replace(/\s+\S*$/, "") + "..."
