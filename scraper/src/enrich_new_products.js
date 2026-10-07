@@ -243,7 +243,7 @@ async function webSearch(page, productName) {
   return best;
 }
 
-async function extractProduct(page, url) {
+async function extractProductOnce(page, url) {
   await goto(page, url, 3);
 
   const data = await page.evaluate(() => {
@@ -413,6 +413,25 @@ async function extractProduct(page, url) {
   });
 
   return { ...data, sourceUrl: page.url() };
+}
+
+async function extractProduct(page, url) {
+  let lastError;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      return await extractProductOnce(page, url);
+    } catch (e) {
+      lastError = e;
+      if (!/detached frame|frame was detached|execution context was destroyed/i.test(String(e.message || e))) {
+        throw e;
+      }
+      await new Promise(r => setTimeout(r, 800 * attempt));
+      try {
+        await goto(page, url, 2);
+      } catch {}
+    }
+  }
+  throw lastError || new Error("product extraction failed");
 }
 
 function normalizeImageUrl(url) {
