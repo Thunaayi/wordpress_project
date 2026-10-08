@@ -526,19 +526,89 @@ async function saveImages(urls, sourceUrl, productName, productId) {
 
 function productKey(p) { return p.id || p.sku || normalize(p.name); }
 
+function stripHtml(value) {
+  return String(value || "")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hasStructuredSpecs(value) {
+  const html = String(value || "");
+  if (!html.trim()) return false;
+
+  // A product-spec table generally has repeated rows with label/value cells.
+  const tableRows = [...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)];
+  const labelValueRows = tableRows.filter(([, row]) => {
+    const cells = [...row.matchAll(/<(?:th|td)\b[^>]*>([\s\S]*?)<\/(?:th|td)>/gi)];
+    return cells.length >= 2 && cells.slice(0, 2).every(([, cell]) => stripHtml(cell).length > 0);
+  });
+  if (labelValueRows.length >= 2) return true;
+
+  const definitionPairs = [...html.matchAll(/<dt\b[^>]*>([\s\S]*?)<\/dt>[\s\S]{0,500}?<dd\b[^>]*>([\s\S]*?)<\/dd>/gi)]
+    .filter(([, label, value]) => stripHtml(label) && stripHtml(value));
+  if (definitionPairs.length >= 2) return true;
+
+  const listItems = [...html.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi)]
+    .map(([, item]) => stripHtml(item))
+    .filter(item => item.length >= 5 && item.length <= 350);
+  const labelledItems = listItems.filter(item => /^[^:：|]{2,70}\s*[:：|]\s*\S/.test(item));
+  if (labelledItems.length >= 2) return true;
+
+  // Some stores use unlabelled feature bullets. Only treat these as specs when
+  // several contain technical measurements/standards, not generic marketing copy.
+  const technicalItems = listItems.filter(item =>
+    /\b\d+(?:\.\d+)?\s*(?:mm|cm|inch|inches|ghz|mhz|gb|tb|mb|w|watts?|rpm|°c|°f|v|volts?|ports?|cores?|threads?|ddr[3456]|pcie|usb\s*[\d.]|wi-?fi|bluetooth|atx|matx|mini-itx|am5|lga\s*\d+)\b/i.test(item)
+  );
+  if (technicalItems.length >= 3) return true;
+
+  const plain = stripHtml(html);
+  return /\b(specifications?|technical specifications?|technical details?)\b/i.test(plain) &&
+    /\b\d+(?:\.\d+)?\s*(?:mm|cm|ghz|mhz|gb|tb|w|rpm|ddr[3456]|pcie|usb)\b/i.test(plain);
+}
+
 function hasExistingSpecs(row) {
   const entries = Object.entries(row);
-  const specColumns = entries.filter(([key]) =>
-    /^(attribute\s*\d+\s*(name|value)|specifications?|specs?|features?|technical\s*details?)$/i.test(String(key).trim())
-  );
-  if (specColumns.some(([, value]) => clean(value))) return true;
 
-  // WooCommerce exports sometimes use "Attribute 1 name/value" and numbered
-  // columns with different spacing/casing.
-  const attributeValues = entries.filter(([key, value]) =>
-    /attribute\s*\d+\s*(name|value)/i.test(String(key)) && clean(value)
+  // WooCommerce attribute exports can contain many blank attribute columns.
+  // Count only complete, non-empty name/value pairs.
+  const attributeIndexes = new Set();
+  for (const [key, value] of entries) {
+    if (!clean(value)) continue;
+    const match = String(key).match(/^attribute\s*(\d+)\s*(name|value)$/i);
+    if (match) {
+      const index = match[1];
+      const side = match[2].toLowerCase();
+      const pair = attributeIndexes.has(index) ? attributeIndexes.get(index) : new Set();
+      pair.add(side);
+      attributeIndexes.add(index);
+      attributeIndexes.set(index, pair);
+    }
+  }
+  if ([...attributeIndexes.values()].filter(pair => pair.has("name") && pair.has("value")).length >= 2) {
+    return true;
+  }
+
+  const explicit = entries.filter(([key, value]) =>
+    /^(specifications?|specs?|features?|technical\s*details?)$/i.test(String(key).trim()) && clean(value)
   );
-  return attributeValues.length >= 2;
+  if (explicit.some(([, value]) => hasStructuredSpecs(value) || stripHtml(value).length >= 100)) return true;
+
+  // Product descriptions and short descriptions frequently hold the specs even
+  // when WooCommerce's dedicated attribute columns are empty.
+  const descriptions = entries
+    .filter(([key]) => /^(description|short description|shortdescription|product description)$/i.test(String(key).trim()))
+    .map(([, value]) => value)
+    .filter(Boolean);
+  return descriptions.some(hasStructuredSpecs);
 }
 
 function loadInventory() {
