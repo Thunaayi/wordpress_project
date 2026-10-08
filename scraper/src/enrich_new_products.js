@@ -608,11 +608,20 @@ async function main() {
   });
   console.log("Inventory: " + inventory.length);
   console.log("Missing-field candidates: " + candidateTargets.length);
-  console.log("To process this run: " + targets.length);
+  console.log("Configured start: " + START);
+  console.log("Configured limit: " + (LIMIT || "UNLIMITED"));
 
-  if (!targets.length) {
-    console.log("No target products found. If these are not blank yet, run with ENRICH_ALL=1.");
+  let runTargets = targets.slice(START);
+  if (LIMIT > 0) runTargets = runTargets.slice(0, LIMIT);
+  console.log("To process this run: " + runTargets.length);
+
+  if (!runTargets.length) {
+    console.log("No target products found.");
     return;
+  }
+
+  if (!LIMIT && !ALLOW_UNLIMITED) {
+    throw new Error("Safety stop: no ENRICH_LIMIT/--limit supplied. Use npm run enrich -- --limit=20 (or set ENRICH_ALLOW_UNLIMITED=1 for a full missing-field run).");
   }
 
   const browser = await puppeteer.launch({
