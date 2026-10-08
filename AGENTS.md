@@ -6,7 +6,7 @@ The repository contains a WordPress/WooCommerce catalogue and a competitor enric
 
 ### Product enrichment goal
 
-The inventory may contain thousands of products (currently about 3,014), but the enrichment job MUST NOT process all products by default. It targets only inventory products that are missing product images OR specifications. Existing complete products are left untouched. The job finds competitor product pages and collects descriptions, specifications, images, matched retailer/source URL, match confidence, and the existing Techistics category.
+The inventory may contain thousands of products, but the enrichment job MUST NOT process all products by default. It targets only inventory products that are missing product images OR specifications. Existing complete products are left untouched. The missing-specification check must inspect WooCommerce attribute name/value pairs AND structured specifications embedded in product descriptions or short descriptions (tables, definition lists, labelled spec bullets, and technical feature lists); a blank attribute column alone does not mean specs are missing. The job finds competitor product pages and collects descriptions, specifications, images, matched retailer/source URL, match confidence, and the existing Techistics category.
 
 The scraper must not silently drop products that cannot be matched.
 
@@ -66,7 +66,7 @@ For a later batch:
 
     $env:ENRICH_START="20"; $env:ENRICH_LIMIT="20"; npm run enrich
 
-Do not start a full 3,014-product run until a small test confirms matching, specification extraction, and image downloading are behaving correctly.
+Do not start a full inventory run until a small test confirms target selection, matching, specification extraction, and image downloading are behaving correctly. After changes to missing-field detection, compare the candidate count against known products whose descriptions already contain tables or technical feature lists.
 
 ### Important
 
