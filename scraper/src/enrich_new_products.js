@@ -580,7 +580,7 @@ function hasExistingSpecs(row) {
 
   // WooCommerce attribute exports can contain many blank attribute columns.
   // Count only complete, non-empty name/value pairs.
-  const attributeIndexes = new Set();
+  const attributeIndexes = new Map();
   for (const [key, value] of entries) {
     if (!clean(value)) continue;
     const match = String(key).match(/^attribute\s*(\d+)\s*(name|value)$/i);
@@ -589,7 +589,6 @@ function hasExistingSpecs(row) {
       const side = match[2].toLowerCase();
       const pair = attributeIndexes.has(index) ? attributeIndexes.get(index) : new Set();
       pair.add(side);
-      attributeIndexes.add(index);
       attributeIndexes.set(index, pair);
     }
   }
