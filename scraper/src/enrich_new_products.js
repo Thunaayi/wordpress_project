@@ -13,8 +13,15 @@ const INPUT_FILE = process.env.ENRICH_INPUT
   ? path.resolve(process.env.ENRICH_INPUT)
   : path.join(DATA_DIR, "wc-product-export-latest.csv");
 
-const LIMIT = Number(process.env.ENRICH_LIMIT || 0);
-const START = Number(process.env.ENRICH_START || 0);
+const argv = process.argv.slice(2);
+function cliValue(name) {
+  const prefix = "--" + name + "=";
+  const arg = argv.find(a => a.startsWith(prefix));
+  return arg ? arg.slice(prefix.length) : "";
+}
+const LIMIT = Number(cliValue("limit") || process.env.ENRICH_LIMIT || 0);
+const START = Number(cliValue("start") || process.env.ENRICH_START || 0);
+const ALLOW_UNLIMITED = process.env.ENRICH_ALLOW_UNLIMITED === "1";
 const ONLY_MISSING = process.env.ENRICH_ALL !== "1";
 const STATUS_FILE = path.join(OUTPUT_DIR, "product_enrichment_status.csv");
 const MASTER_JSON = path.join(OUTPUT_DIR, "product_enrichment_status.json");
@@ -628,9 +635,9 @@ async function main() {
 
   const results = [];
 
-  for (let i = 0; i < targets.length; i++) {
-    const target = targets[i];
-    console.log("\n[" + (i + 1) + "/" + targets.length + "] " + target.name);
+  for (let i = 0; i < runTargets.length; i++) {
+    const target = runTargets[i];
+    console.log("\n[" + (i + 1) + "/" + runTargets.length + "] " + target.name);
 
     let best = null;
 
