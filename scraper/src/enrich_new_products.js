@@ -743,7 +743,7 @@ async function main() {
   }
 
   if (!LIMIT && !ALLOW_UNLIMITED) {
-    throw new Error("Safety stop: no ENRICH_LIMIT/--limit supplied. Use npm run enrich -- --limit=20 (or set ENRICH_ALLOW_UNLIMITED=1 for a full missing-field run).");
+    throw new Error("Safety stop: no ENRICH_LIMIT/--limit supplied. Use npm run enrich -- --limit=20 (or set ENRICH_ALLOW_UNLIMITED=1 to process the full image-missing queue).");
   }
 
   const browser = await puppeteer.launch({
