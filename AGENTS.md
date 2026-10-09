@@ -6,13 +6,13 @@ The repository contains a WordPress/WooCommerce catalogue and a competitor enric
 
 ### Product enrichment goal
 
-The inventory may contain thousands of products, but the enrichment job MUST NOT process all products by default. It targets only inventory products that are missing product images OR specifications. Existing complete products are left untouched. The missing-specification check must inspect WooCommerce attribute name/value pairs AND structured specifications embedded in product descriptions or short descriptions (tables, definition lists, labelled spec bullets, and technical feature lists); a blank attribute column alone does not mean specs are missing. The job finds competitor product pages and collects descriptions, specifications, images, matched retailer/source URL, match confidence, and the existing Techistics category.
+The inventory may contain thousands of products. The enrichment job MUST ONLY scrape products whose WooCommerce Images field is empty or contains an explicit no-image placeholder. Any populated image field—including a Techistics WordPress media URL or multiple image URLs—means the product already has an image and MUST be excluded from scraping, even if its specifications or description are missing. There is no all-products override. Products without images are the new-product enrichment queue; collect competitor product images, specifications, and description for those products. The missing-specification check must inspect WooCommerce attribute name/value pairs AND structured specifications embedded in product descriptions or short descriptions (tables, definition lists, labelled spec bullets, and technical feature lists).
 
 The scraper must not silently drop products that cannot be matched.
 
 ### Status tracking
 
-Only products selected for enrichment need to appear in the enrichment status reports. Do not create a 3,014-product enrichment queue merely for reporting.
+Enrichment status reports should contain only products without existing images. Separately create a full inventory classification so the user can distinguish image-present from image-missing products without scraping the image-present group. Never add an image-present product to the enrichment queue.
 
 Statuses:
 - MATCHED — sufficiently confident competitor match.
@@ -23,13 +23,17 @@ Statuses:
 - PENDING — selected for enrichment but not processed in the current run.
 - SKIPPED — intentionally not processed, normally because the product is already complete.
 
-The status CSV should support filtering by category, retailer, match score, image count, and specification count. A product with existing images but missing specs, or existing specs but missing images, must still be selected.
+The status CSV should support filtering by category, retailer, match score, image count, and specification count. Image presence is the hard eligibility gate: no product with an existing image may be selected.
 
 Progress must persist across runs. A previously enriched product with status MATCHED or SKIPPED must not be reprocessed on the next run. PARTIAL, NO_MATCH, and ERROR products remain retryable. Batch limits and interruptions must not lose completed results.
 
 ### Output files
 
-- output/product_enrichment_status.csv — master tracking report for the whole inventory.
+- output/product_image_inventory.csv — classification of the full inventory into HAS_IMAGE and MISSING_IMAGE, including current image URL, specs presence, and description presence.
+- output/image_present.csv — image-present products; classification only, never scraped.
+- output/image_missing.csv — image-missing products eligible for enrichment.
+- output/product_image_inventory.json — machine-readable full inventory classification.
+- output/product_enrichment_status.csv — master tracking report for image-missing products only.
 - output/product_enrichment_status.json — machine-readable master report.
 - output/matched.csv, partial.csv, multiple_matches.csv, no_match.csv, error.csv, pending.csv, skipped.csv — review buckets.
 - output/enriched_products.csv — detailed enrichment data.
@@ -66,7 +70,7 @@ For a later batch:
 
     $env:ENRICH_START="20"; $env:ENRICH_LIMIT="20"; npm run enrich
 
-Do not start a full inventory run until a small test confirms target selection, matching, specification extraction, and image downloading are behaving correctly. After changes to missing-field detection, compare the candidate count against known products whose descriptions already contain tables or technical feature lists.
+Do not start a full image-missing queue run until a small test confirms the target count equals the number of rows with no image URL, and confirms that no product with a Techistics WordPress image URL is scraped.
 
 ### Important
 
