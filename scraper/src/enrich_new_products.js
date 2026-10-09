@@ -348,45 +348,84 @@ async function extractProductOnce(page, url) {
       }
     });
 
-    const imageCandidates = [];
-    const pushImage = value => {
+    const productImageCandidates = [];
+    const metadataImageCandidates = [];
+    const rejectedImagePattern = /(logo|favicon|icon|sprite|placeholder|no[-_ ]?image|loader|spinner|avatar|payment|trustpilot|whatsapp|facebook|instagram|twitter|youtube|badge|seal|captcha|cart-icon|search-icon|account-icon)/i;
+    const pushImage = (target, value) => {
       if (!value) return;
-      try { imageCandidates.push(new URL(value, location.href).href); } catch {}
+      try {
+        const url = new URL(value, location.href).href;
+        if (!/^https?:/i.test(url) || rejectedImagePattern.test(url)) return;
+        target.push(url);
+      } catch {}
     };
 
-    const jsonImages = p.image;
-    if (Array.isArray(jsonImages)) jsonImages.forEach(pushImage);
-    else pushImage(jsonImages);
+    // Product-gallery images are the primary source. Avoid harvesting every
+    // linked PNG/JPG on the page: theme/social/payment icons are often linked
+    // image files and were incorrectly saved as product photos.
+    const gallerySelectors = [
+      ".woocommerce-product-gallery img",
+      ".woocommerce-product-gallery__wrapper img",
+      ".flex-control-thumbs img",
+      ".product-gallery img",
+      ".product-images img",
+      ".product-image img",
+      ".product-media img",
+      ".product-main-image img",
+      "[data-product-gallery] img"
+    ];
+    const galleryImages = [...new Set(gallerySelectors.flatMap(selector =>
+      [...document.querySelectorAll(selector)]
+    ))];
 
-    pushImage(meta("og:image"));
-    pushImage(meta("twitter:image"));
+    const isLikelyProductImage = (img, galleryImage) => {
+      const clues = (
+        attr(img, "alt") + " " + attr(img, "title") + " " +
+        attr(img, "class") + " " + attr(img.parentElement, "class") + " " +
+        attr(img, "src") + " " + attr(img, "data-src")
+      ).toLowerCase();
+      if (rejectedImagePattern.test(clues)) return false;
+      const width = Number(img.naturalWidth || img.width || attr(img, "width") || 0);
+      const height = Number(img.naturalHeight || img.height || attr(img, "height") || 0);
+      if (width > 0 && height > 0 && (width < 160 || height < 160)) return false;
+      // Gallery membership is strong evidence even when lazy-loading prevents
+      // dimensions from being available. General page images need real size.
+      return galleryImage || (width >= 200 && height >= 200);
+    };
 
-    document.querySelectorAll("img").forEach(img => {
-      const altText = (attr(img, "alt") + " " + attr(img, "title") + " " + attr(img, "class")).toLowerCase();
-      const width = Number(img.naturalWidth || img.width || 0);
-      const height = Number(img.naturalHeight || img.height || 0);
-      if (/(logo|favicon|icon|sprite|placeholder|no[-_ ]?image|loader|spinner|avatar|payment|trustpilot|whatsapp|facebook|instagram|twitter|youtube|badge|seal|captcha)/i.test(altText)) return;
-      if (width > 0 && height > 0 && (width < 120 || height < 120)) return;
-
+    const addImageElement = (img, galleryImage) => {
+      if (!isLikelyProductImage(img, galleryImage)) return;
       [
-        "data-large_image","data-large-image","data-full","data-zoom-image",
-        "data-src","data-lazy-src","data-original","src"
-      ].forEach(a => pushImage(attr(img, a)));
-
-      for (const a of ["data-srcset","srcset"]) {
+        "data-large_image", "data-large-image", "data-full", "data-zoom-image",
+        "data-src", "data-lazy-src", "data-original", "src"
+      ].forEach(a => pushImage(productImageCandidates, attr(img, a)));
+      for (const a of ["data-srcset", "srcset"]) {
         const raw = attr(img, a);
-        if (raw) raw.split(",").forEach(part => pushImage(part.trim().split(/\s+/)[0]));
+        if (raw) raw.split(",").forEach(part =>
+          pushImage(productImageCandidates, part.trim().split(/\s+/)[0])
+        );
       }
-    });
+    };
 
-    document.querySelectorAll("a[href]").forEach(a => {
-      const href = attr(a, "href");
-      if (/\.(jpe?g|png|webp|gif|avif)(?:\?|$)/i.test(href)) pushImage(href);
-    });
+    galleryImages.forEach(img => addImageElement(img, true));
+    if (!productImageCandidates.length) {
+      // Fallback only to large images inside product/article content. Never
+      // scrape arbitrary image links from navigation, headers, or footers.
+      document.querySelectorAll("main img, article img, .product img, [itemtype*='Product'] img")
+        .forEach(img => addImageElement(img, false));
+    }
 
-    const images = [...new Set(imageCandidates)].filter(u =>
-      !/(logo|icon|avatar|payment|sprite|placeholder|loader|spinner|favicon|trustpilot)/i.test(u)
-    );
+    const jsonImages = p.image;
+    if (Array.isArray(jsonImages)) jsonImages.forEach(value => pushImage(metadataImageCandidates, value));
+    else pushImage(metadataImageCandidates, jsonImages);
+    pushImage(metadataImageCandidates, meta("og:image"));
+    pushImage(metadataImageCandidates, meta("twitter:image"));
+
+    // Metadata is a last resort only; prefer images from the actual product
+    // gallery so a site-wide og:image/logo cannot displace product photos.
+    const images = [...new Set(productImageCandidates.length
+      ? productImageCandidates
+      : metadataImageCandidates)];
 
     if (!Object.keys(specs).length) {
       let featureIndex = 1;
