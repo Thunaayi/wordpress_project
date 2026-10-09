@@ -13,9 +13,17 @@ const INPUT_FILE = process.env.ENRICH_INPUT
   ? path.resolve(process.env.ENRICH_INPUT)
   : path.join(DATA_DIR, "wc-product-export-latest.csv");
 
-const LIMIT = Number(process.env.ENRICH_LIMIT || 0);
-const START = Number(process.env.ENRICH_START || 0);
-const ONLY_MISSING = process.env.ENRICH_ALL !== "1";
+const argv = process.argv.slice(2);
+function cliValue(name) {
+  const prefix = "--" + name + "=";
+  const arg = argv.find(a => a.startsWith(prefix));
+  return arg ? arg.slice(prefix.length) : "";
+}
+const LIMIT = Number(cliValue("limit") || process.env.ENRICH_LIMIT || 0);
+const START = Number(cliValue("start") || process.env.ENRICH_START || 0);
+const ALLOW_UNLIMITED = process.env.ENRICH_ALLOW_UNLIMITED === "1";
+const STATUS_FILE = path.join(OUTPUT_DIR, "product_enrichment_status.csv");
+const MASTER_JSON = path.join(OUTPUT_DIR, "product_enrichment_status.json");
 const MIN_MATCH = Number(process.env.ENRICH_MIN_MATCH || 0.72);
 
 const SOURCES = [
@@ -134,11 +142,22 @@ function queryVariants(name) {
   return [...new Set(variants.map(clean).filter(Boolean))];
 }
 
+function searchTermsForTarget(target) {
+  const terms = [];
+  if (target.sku && target.sku.length >= 4) terms.push(target.sku);
+  terms.push(...queryVariants(target.name));
+  return [...new Set(terms.map(clean).filter(Boolean))];
+}
+
+function looksLikeGenericProductName(name) {
+  return /^(home|shop|products?|brands?|categories?|category|search|corsair|lian li|a4tech|zalman|cooler master|deepcool|asus|msi|gigabyte|kingston|logitech)$/i.test(clean(name));
+}
+
 function isProductUrl(href, domain) {
   try {
     const u = new URL(href);
     if (!u.hostname.includes(domain)) return false;
-    if (/cart|checkout|my-account|login|wishlist|compare|feed|tag|category|author/i.test(u.pathname)) return false;
+    if (/cart|checkout|my-account|login|wishlist|compare|feed|tag|category|categories|product-category|author|brand|brands|shop|search/i.test(u.pathname)) return false;
     return u.protocol === "http:" || u.protocol === "https:";
   } catch {
     return false;
@@ -230,7 +249,7 @@ async function webSearch(page, productName) {
   return best;
 }
 
-async function extractProduct(page, url) {
+async function extractProductOnce(page, url) {
   await goto(page, url, 3);
 
   const data = await page.evaluate(() => {
@@ -299,23 +318,33 @@ async function extractProduct(page, url) {
     });
 
     document.querySelectorAll("dl").forEach(dl => {
-      const dts = [...dl.querySelectorAll("dt")];
-      for (const dt of dts) {
+      [...dl.querySelectorAll("dt")].forEach(dt => {
         let dd = dt.nextElementSibling;
         while (dd && dd.tagName !== "DD") dd = dd.nextElementSibling;
         if (dd) addSpec(dt, dd);
+      });
+    });
+
+    document.querySelectorAll(".woocommerce-product-attributes-item,.product-attribute,.product_attribute,.attribute,.specification,.specifications li,.specs li,.product-specs li,.product-specification,.product-specifications li,.spec-row,.spec-item,.specification-row,.specification-item,.technical-specifications li,.technical-specs li,.product-details li,.product-info li,.accordion-item,.tab-pane li").forEach(row => {
+      const cells = [...row.querySelectorAll("th,td,.label,.value,.name,.attribute-label,.attribute-value,.woocommerce-product-attributes-item__label,.woocommerce-product-attributes-item__value,[class*=\"label\"],[class*=\"value\"],[class*=\"name\"]")].map(text).filter(Boolean);
+      if (cells.length >= 2) addSpec(cells[0], cells.slice(1).join(" "));
+      else {
+        const m = text(row).match(/^([^:：|]{2,100})\s*[:：|]\s*(.{2,1000})$/);
+        if (m) addSpec(m[1], m[2]);
       }
     });
 
-    document.querySelectorAll(
-      ".woocommerce-product-attributes-item, .product-attribute, .attribute, .specification, .specifications li, .specs li, .product-specs li"
-    ).forEach(row => {
-      const cells = [...row.querySelectorAll("th,td,.label,.value,.name,.attribute-label,.attribute-value")].map(text).filter(Boolean);
-      if (cells.length >= 2) addSpec(cells[0], cells.slice(1).join(" "));
-      else {
-        const raw = text(row);
-        const m = raw.match(/^([^:]{2,80}):\s*(.{2,500})$/);
-        if (m) addSpec(m[1], m[2]);
+    [...document.querySelectorAll("h2,h3,h4,h5,strong,b")].filter(el => /specifications?|technical details?|product details?|features?/i.test(text(el))).forEach(heading => {
+      let node = heading.nextElementSibling;
+      for (let i = 0; node && i < 8; i++, node = node.nextElementSibling) {
+        node.querySelectorAll?.("tr").forEach(row => {
+          const cells = [...row.querySelectorAll("th,td")].map(text).filter(Boolean);
+          if (cells.length >= 2) addSpec(cells[0], cells.slice(1).join(" "));
+        });
+        node.querySelectorAll?.("li").forEach(li => {
+          const m = text(li).match(/^([^:：|]{2,100})\s*[:：|]\s*(.{2,1000})$/);
+          if (m) addSpec(m[1], m[2]);
+        });
       }
     });
 
@@ -333,6 +362,12 @@ async function extractProduct(page, url) {
     pushImage(meta("twitter:image"));
 
     document.querySelectorAll("img").forEach(img => {
+      const altText = (attr(img, "alt") + " " + attr(img, "title") + " " + attr(img, "class")).toLowerCase();
+      const width = Number(img.naturalWidth || img.width || 0);
+      const height = Number(img.naturalHeight || img.height || 0);
+      if (/(logo|favicon|icon|sprite|placeholder|no[-_ ]?image|loader|spinner|avatar|payment|trustpilot|whatsapp|facebook|instagram|twitter|youtube|badge|seal|captcha)/i.test(altText)) return;
+      if (width > 0 && height > 0 && (width < 120 || height < 120)) return;
+
       [
         "data-large_image","data-large-image","data-full","data-zoom-image",
         "data-src","data-lazy-src","data-original","src"
@@ -352,6 +387,17 @@ async function extractProduct(page, url) {
     const images = [...new Set(imageCandidates)].filter(u =>
       !/(logo|icon|avatar|payment|sprite|placeholder|loader|spinner|favicon|trustpilot)/i.test(u)
     );
+
+    if (!Object.keys(specs).length) {
+      let featureIndex = 1;
+      document.querySelectorAll("ul li, ol li").forEach(li => {
+        const value = text(li);
+        if (value.length >= 12 && value.length <= 500 &&
+            !/^(add to cart|buy now|in stock|out of stock|reviews?)/i.test(value)) {
+          addSpec("Feature " + featureIndex++, value);
+        }
+      });
+    }
 
     const price = p.offers?.price || p.offers?.[0]?.price ||
       firstText([".price", ".product-price", ".special-price", "[itemprop='price']"]) || "";
@@ -373,6 +419,25 @@ async function extractProduct(page, url) {
   });
 
   return { ...data, sourceUrl: page.url() };
+}
+
+async function extractProduct(page, url) {
+  let lastError;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      return await extractProductOnce(page, url);
+    } catch (e) {
+      lastError = e;
+      if (!/detached frame|frame was detached|execution context was destroyed/i.test(String(e.message || e))) {
+        throw e;
+      }
+      await new Promise(r => setTimeout(r, 800 * attempt));
+      try {
+        await goto(page, url, 2);
+      } catch {}
+    }
+  }
+  throw lastError || new Error("product extraction failed");
 }
 
 function normalizeImageUrl(url) {
@@ -423,16 +488,26 @@ function fetchBinary(url, referer, redirects = 0) {
   });
 }
 
-async function saveImages(urls, sourceUrl, id) {
+function imageSlug(name) {
+  return normalize(name)
+    .replace(/\b(price|in pakistan|pakistan)\b/g, " ")
+    .replace(/\s+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120) || "product";
+}
+
+async function saveImages(urls, sourceUrl, productName, productId) {
   const dir = path.join(DATA_DIR, "images");
   fs.mkdirSync(dir, { recursive: true });
   const saved = [];
+  const base = imageSlug(productName);
+  const identity = productId ? "-" + imageSlug(String(productId)) : "";
 
   for (let i = 0; i < Math.min(urls.length, 8); i++) {
     const url = normalizeImageUrl(urls[i]);
     if (!url) continue;
 
-    const filename = "product_" + id + "_" + i + extension(url);
+    const filename = base + identity + (i ? "-" + i : "") + extension(url);
     const savePath = path.join(dir, filename);
 
     try {
@@ -448,83 +523,227 @@ async function saveImages(urls, sourceUrl, id) {
   return saved;
 }
 
-function loadTargets() {
-  if (!fs.existsSync(INPUT_FILE)) throw new Error("Input CSV not found: " + INPUT_FILE);
+function productKey(p) { return p.id || p.sku || normalize(p.name); }
 
-  const records = parse(fs.readFileSync(INPUT_FILE, "utf8"), {
-    columns: true,
-    skip_empty_lines: true,
-    relax_column_count: true,
-    bom: true
-  });
-
-  let products = records.map(r => ({
-    id: clean(r.ID || r.id),
-    sku: clean(r.SKU || r.sku),
-    name: clean(r.Name || r.name),
-    category: clean(r.Categories || r.Category || r.category),
-    existingImages: clean(r.Images || r.images),
-    existingDescription: clean(r.Description || r.description),
-    existingShortDescription: clean(r["Short description"] || r.ShortDescription || "")
-  })).filter(p => p.name);
-
-  if (ONLY_MISSING) {
-    products = products.filter(p =>
-      !p.existingImages || !p.existingDescription || !p.existingShortDescription
-    );
-  }
-
-  if (START) products = products.slice(START);
-  if (LIMIT) products = products.slice(0, LIMIT);
-
-  return products;
+function stripHtml(value) {
+  return String(value || "")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-function saveOutputs(results) {
-  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+function hasStructuredSpecs(value) {
+  const html = String(value || "");
+  if (!html.trim()) return false;
 
-  fs.writeFileSync(
-    path.join(OUTPUT_DIR, "enriched_products.json"),
-    JSON.stringify({ generatedAt: new Date().toISOString(), total: results.length, results }, null, 2)
+  // A product-spec table generally has repeated rows with label/value cells.
+  const tableRows = [...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)];
+  const labelValueRows = tableRows.filter(([, row]) => {
+    const cells = [...row.matchAll(/<(?:th|td)\b[^>]*>([\s\S]*?)<\/(?:th|td)>/gi)];
+    return cells.length >= 2 && cells.slice(0, 2).every(([, cell]) => stripHtml(cell).length > 0);
+  });
+  if (labelValueRows.length >= 2) return true;
+
+  const definitionPairs = [...html.matchAll(/<dt\b[^>]*>([\s\S]*?)<\/dt>[\s\S]{0,500}?<dd\b[^>]*>([\s\S]*?)<\/dd>/gi)]
+    .filter(([, label, value]) => stripHtml(label) && stripHtml(value));
+  if (definitionPairs.length >= 2) return true;
+
+  const listItems = [...html.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi)]
+    .map(([, item]) => stripHtml(item))
+    .filter(item => item.length >= 5 && item.length <= 350);
+  const labelledItems = listItems.filter(item => /^[^:：|]{2,70}\s*[:：|]\s*\S/.test(item));
+  if (labelledItems.length >= 2) return true;
+
+  // Some stores use unlabelled feature bullets. Only treat these as specs when
+  // several contain technical measurements/standards, not generic marketing copy.
+  const technicalItems = listItems.filter(item =>
+    /\b\d+(?:\.\d+)?\s*(?:mm|cm|inch|inches|ghz|mhz|gb|tb|mb|w|watts?|rpm|°c|°f|v|volts?|ports?|cores?|threads?|ddr[3456]|pcie|usb\s*[\d.]|wi-?fi|bluetooth|atx|matx|mini-itx|am5|lga\s*\d+)\b/i.test(item)
   );
+  if (technicalItems.length >= 3) return true;
 
-  const headers = [
-    "ID","SKU","Name","Short description","Description","Images",
-    "Specifications","Source URL","Source","Match score","Status"
-  ];
-  const rows = [headers.join(",")];
+  const plain = stripHtml(html);
+  return /\b(specifications?|technical specifications?|technical details?)\b/i.test(plain) &&
+    /\b\d+(?:\.\d+)?\s*(?:mm|cm|ghz|mhz|gb|tb|w|rpm|ddr[3456]|pcie|usb)\b/i.test(plain);
+}
 
-  for (const r of results) {
-    rows.push([
-      r.id, r.sku, r.name, r.shortDescription || "", r.description || "",
-      (r.images || []).join(", "), JSON.stringify(r.specs || {}),
-      r.sourceUrl || "", r.source || "", r.matchScore || 0, r.status || ""
-    ].map(csvEscape).join(","));
+function hasImageValue(value) {
+  const imageValue = clean(value);
+  if (!imageValue) return false;
+  if (/^(none|null|n\/a|na|no image|no images|not available|-)$/i.test(imageValue)) return false;
+  // Any populated WooCommerce Images field counts as an existing image. This
+  // intentionally includes Techistics WordPress media URLs and multiple URLs.
+  return true;
+}
+
+function hasExistingSpecs(row) {
+  const entries = Object.entries(row);
+
+  // WooCommerce attribute exports can contain many blank attribute columns.
+  // Count only complete, non-empty name/value pairs.
+  const attributeIndexes = new Map();
+  for (const [key, value] of entries) {
+    if (!clean(value)) continue;
+    const match = String(key).match(/^attribute\s*(\d+)\s*(name|value)$/i);
+    if (match) {
+      const index = match[1];
+      const side = match[2].toLowerCase();
+      const pair = attributeIndexes.has(index) ? attributeIndexes.get(index) : new Set();
+      pair.add(side);
+      attributeIndexes.set(index, pair);
+    }
   }
-  fs.writeFileSync(path.join(OUTPUT_DIR, "enriched_products.csv"), rows.join("\n") + "\n");
-
-  const wcRows = [["ID","SKU","Name","Short description","Description","Images"].join(",")];
-  for (const r of results.filter(x => x.status === "matched" && x.id)) {
-    wcRows.push([
-      r.id, r.sku, r.name, r.shortDescription || "", r.description || "",
-      (r.images || []).join(", ")
-    ].map(csvEscape).join(","));
+  if ([...attributeIndexes.values()].filter(pair => pair.has("name") && pair.has("value")).length >= 2) {
+    return true;
   }
-  fs.writeFileSync(path.join(OUTPUT_DIR, "enriched_products_woocommerce.csv"), wcRows.join("\n") + "\n");
+
+  const explicit = entries.filter(([key, value]) =>
+    /^(specifications?|specs?|features?|technical\s*details?)$/i.test(String(key).trim()) && clean(value)
+  );
+  if (explicit.some(([, value]) => hasStructuredSpecs(value) || stripHtml(value).length >= 100)) return true;
+
+  // Product descriptions and short descriptions frequently hold the specs even
+  // when WooCommerce's dedicated attribute columns are empty.
+  const descriptions = entries
+    .filter(([key]) => /^(description|short description|shortdescription|product description)$/i.test(String(key).trim()))
+    .map(([, value]) => value)
+    .filter(Boolean);
+  return descriptions.some(hasStructuredSpecs);
+}
+
+function loadInventory() {
+  if (!fs.existsSync(INPUT_FILE)) throw new Error("Input CSV not found: " + INPUT_FILE);
+  return parse(fs.readFileSync(INPUT_FILE, "utf8"), { columns:true, skip_empty_lines:true, relax_column_count:true, bom:true })
+    .map((r,i) => {
+      const existingImages = clean(r.Images || r.images);
+      const hasImage = hasImageValue(existingImages);
+      const existingDescription = clean(r.Description || r.description);
+      const existingShortDescription = clean(r["Short description"] || r.ShortDescription || "");
+      return {
+        index: i, raw: r, id: clean(r.ID || r.id), sku: clean(r.SKU || r.sku),
+        name: clean(r.Name || r.name), category: clean(r.Categories || r.Category || r.category),
+        existingImages, hasExistingImage: hasImage, imageStatus: hasImage ? "HAS_IMAGE" : "MISSING_IMAGE",
+        existingDescription, existingShortDescription, existingSpecs: hasExistingSpecs(r),
+        hasExistingDescription: Boolean(stripHtml(existingDescription || existingShortDescription))
+      };
+    })
+    .filter(p => p.name);
+}
+
+function loadPreviousResults() {
+  const file = path.join(OUTPUT_DIR, "enriched_products.json");
+  if (!fs.existsSync(file)) return new Map();
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    const rows = Array.isArray(parsed) ? parsed : (parsed.results || parsed.products || []);
+    return new Map(rows.map(r => [productKey(r), {
+      ...r,
+      status: String(r.status || "").toUpperCase()
+    }]));
+  } catch {
+    return new Map();
+  }
+}
+
+function saveOutputs(results, inventory) {
+  fs.mkdirSync(OUTPUT_DIR,{recursive:true});
+  const byKey = new Map(results.map(r => [productKey(r), r]));
+
+  // Export the inventory split separately for review. These reports are
+  // classification-only: image-present products are never sent to enrichment.
+  const imageHeaders = ["ID", "SKU", "Name", "Category", "Image status", "Existing image URL", "Existing specs", "Existing description"];
+  const imageRows = inventory.map(p => [
+    p.id, p.sku, p.name, p.category || "", p.imageStatus, p.existingImages || "",
+    p.existingSpecs ? "YES" : "NO", p.hasExistingDescription ? "YES" : "NO"
+  ]);
+  const writeCsv = (file, headers, rows) => {
+    fs.writeFileSync(path.join(OUTPUT_DIR, file), [headers, ...rows].map(row => row.map(csvEscape).join(",")).join("\n") + "\n");
+  };
+  writeCsv("product_image_inventory.csv", imageHeaders, imageRows);
+  writeCsv("image_present.csv", imageHeaders, imageRows.filter(row => row[4] === "HAS_IMAGE"));
+  writeCsv("image_missing.csv", imageHeaders, imageRows.filter(row => row[4] === "MISSING_IMAGE"));
+  fs.writeFileSync(path.join(OUTPUT_DIR, "product_image_inventory.json"), JSON.stringify({
+    generatedAt: new Date().toISOString(),
+    total: inventory.length,
+    imagePresent: inventory.filter(p => p.hasExistingImage).length,
+    imageMissing: inventory.filter(p => !p.hasExistingImage).length,
+    products: inventory.map(p => ({
+      id: p.id, sku: p.sku, name: p.name, category: p.category,
+      imageStatus: p.imageStatus, existingImages: p.existingImages,
+      existingSpecs: p.existingSpecs, hasExistingDescription: p.hasExistingDescription
+    }))
+  }, null, 2));
+
+  const targets = inventory.filter(p => !p.hasExistingImage);
+  const master=targets.map(p=>byKey.get(productKey(p)) || {...p,status:"PENDING",reason:"Not processed yet"});
+  const headers=["ID","SKU","Name","Category","Status","Match score","Matched retailer","Matched product","Matched URL","Images found","Specs found","Description found","Reason"];
+  const rows=[headers.join(",")];
+  for(const r of master) rows.push([r.id,r.sku,r.name,r.category||"",r.status||"PENDING",r.matchScore||0,r.source||"",r.sourceName||r.candidateName||"",r.sourceUrl||r.candidateUrl||"",(r.images||[]).length,Object.keys(r.specs||{}).length,r.description?"YES":"NO",r.reason||""].map(csvEscape).join(","));
+  fs.writeFileSync(STATUS_FILE,rows.join("\n")+"\n");
+  fs.writeFileSync(MASTER_JSON,JSON.stringify({generatedAt:new Date().toISOString(),total:master.length,products:master},null,2));
+
+  const groups=["MATCHED","PARTIAL","MULTIPLE_MATCHES","NO_MATCH","ERROR","PENDING","SKIPPED"];
+  for(const group of groups){
+    const out=[headers.join(",")];
+    for(const r of master.filter(x=>x.status===group)) out.push([r.id,r.sku,r.name,r.category||"",r.status,r.matchScore||0,r.source||"",r.sourceName||r.candidateName||"",r.sourceUrl||r.candidateUrl||"",(r.images||[]).length,Object.keys(r.specs||{}).length,r.description?"YES":"NO",r.reason||""].map(csvEscape).join(","));
+    fs.writeFileSync(path.join(OUTPUT_DIR,group.toLowerCase()+".csv"),out.join("\n")+"\n");
+  }
+
+  const detailed=["ID","SKU","Name","Category","Short description","Description","Images","Specifications","Source URL","Source","Match score","Status","Reason"];
+  const detailRows=[detailed.join(",")];
+  for(const r of master) detailRows.push([r.id,r.sku,r.name,r.category||"",r.shortDescription||"",r.description||"",(r.images||[]).join(", "),JSON.stringify(r.specs||{}),r.sourceUrl||"",r.source||"",r.matchScore||0,r.status||"",r.reason||""].map(csvEscape).join(","));
+  fs.writeFileSync(path.join(OUTPUT_DIR,"enriched_products.csv"),detailRows.join("\n")+"\n");
+
+  const wc=["ID","SKU","Name","Short description","Description","Images"].join(",")+"\n"+master.filter(x=>x.status==="MATCHED"&&x.id).map(r=>[r.id,r.sku,r.name,r.shortDescription||"",r.description||"",(r.images||[]).join(", ")].map(csvEscape).join(",")).join("\n");
+  fs.writeFileSync(path.join(OUTPUT_DIR,"enriched_products_woocommerce.csv"),wc+"\n");
+  fs.writeFileSync(path.join(OUTPUT_DIR,"enriched_products.json"),JSON.stringify({generatedAt:new Date().toISOString(),total:master.length,results:master},null,2));
+  return master;
 }
 
 async function main() {
   console.log("=== Techistics product enrichment ===");
   console.log("Input: " + INPUT_FILE);
-  console.log("Mode: " + (ONLY_MISSING ? "missing fields only" : "all products"));
+  console.log("Mode: products without an existing image ONLY (image-present products are never enriched)");
   console.log("Minimum match: " + MIN_MATCH);
 
-  const targets = loadTargets();
-  console.log("Targets: " + targets.length);
+  const inventory = loadInventory();
+  const previous = loadPreviousResults();
+  const candidateTargets = inventory.filter(p => !p.hasExistingImage);
+  const targets = candidateTargets.filter(p => {
+    const prior = previous.get(productKey(p));
+    const priorStatus = String(prior?.status || "").toUpperCase();
+    return !prior || !["MATCHED", "SKIPPED"].includes(priorStatus);
+  });
+  console.log("Inventory: " + inventory.length);
+  console.log("Products with existing images (excluded): " + inventory.filter(p => p.hasExistingImage).length);
+  console.log("Products missing images (enrichment candidates): " + candidateTargets.length);
+  console.log("Configured start: " + START);
+  console.log("Configured limit: " + (LIMIT || "UNLIMITED"));
 
-  if (!targets.length) {
-    console.log("No target products found. If these are not blank yet, run with ENRICH_ALL=1.");
+  let runTargets = targets.slice(START);
+  if (LIMIT > 0) runTargets = runTargets.slice(0, LIMIT);
+  console.log("To process this run: " + runTargets.length);
+
+  // Hard safety invariant: no product with an existing image may reach the scraper.
+  if (runTargets.some(p => p.hasExistingImage)) {
+    throw new Error("Safety stop: image-present product entered the enrichment queue.");
+  }
+
+  if (!runTargets.length) {
+    console.log("No unprocessed image-missing products found.");
+    saveOutputs([...previous.values()], inventory);
     return;
+  }
+
+  if (!LIMIT && !ALLOW_UNLIMITED) {
+    throw new Error("Safety stop: no ENRICH_LIMIT/--limit supplied. Use npm run enrich -- --limit=20 (or set ENRICH_ALLOW_UNLIMITED=1 to process the full image-missing queue).");
   }
 
   const browser = await puppeteer.launch({
@@ -547,56 +766,111 @@ async function main() {
 
   const results = [];
 
-  for (let i = 0; i < targets.length; i++) {
-    const target = targets[i];
-    console.log("\n[" + (i + 1) + "/" + targets.length + "] " + target.name);
+  for (let i = 0; i < runTargets.length; i++) {
+    const target = runTargets[i];
+    console.log("\n[" + (i + 1) + "/" + runTargets.length + "] " + target.name);
 
     let best = null;
 
-    for (const source of SOURCES) {
-      const candidate = await searchSite(page, source, target.name);
-      if (candidate && (!best || candidate.score > best.score)) best = candidate;
-      if (best && best.score >= 0.94) break;
+    const searchTerms = searchTermsForTarget(target);
+
+    // SKU/model searches are much safer than broad product-name searches.
+    for (const term of searchTerms.slice(0, 1)) {
+      for (const source of SOURCES) {
+        const candidate = await searchSite(page, source, term);
+        if (candidate && (!best || candidate.score > best.score)) best = candidate;
+        if (best && best.score >= 0.96) break;
+      }
+      if (best && best.score >= 0.96) break;
     }
 
+    // Fall back to product-name searches when the SKU is not indexed.
+    if (!best || best.score < 0.92) {
+      for (const term of searchTerms.slice(target.sku && target.sku.length >= 4 ? 1 : 0)) {
+        for (const source of SOURCES) {
+          const candidate = await searchSite(page, source, term);
+          if (candidate && (!best || candidate.score > best.score)) best = candidate;
+          if (best && best.score >= 0.96) break;
+        }
+        if (best && best.score >= 0.96) break;
+      }
+    }
+
+    // External search is a last resort, not the first matcher.
     if (!best || best.score < MIN_MATCH) {
-      const webCandidate = await webSearch(page, target.name);
-      if (webCandidate && (!best || webCandidate.score > best.score)) best = webCandidate;
+      for (const term of searchTerms) {
+        const webCandidate = await webSearch(page, term);
+        if (webCandidate && (!best || webCandidate.score > best.score)) best = webCandidate;
+        if (best && best.score >= 0.92) break;
+      }
     }
 
     if (!best || best.score < MIN_MATCH) {
       console.log("    NOT FOUND (best: " + (best ? best.score.toFixed(2) : "none") + ")");
       results.push({
-        ...target, status: "not_found",
+        ...target, status: "NO_MATCH",
         matchScore: best ? best.score : 0,
-        candidateUrl: best?.url || "", candidateName: best?.matchedText || ""
+        candidateUrl: best?.url || "", candidateName: best?.matchedText || "", reason: "No sufficiently confident product-page match"
       });
       continue;
     }
 
     try {
       console.log("    " + best.source + " " + best.score.toFixed(2) + " -> " + best.url);
-      const data = await extractProduct(page, best.url);
+      let data = await extractProduct(page, best.url);
       const pageScore = scoreMatch(target.name, data.name);
-      const finalScore = Math.max(best.score, pageScore);
+      const genericPage = looksLikeGenericProductName(data.name);
+      let finalScore = pageScore;
 
-      if (finalScore < MIN_MATCH) {
-        results.push({
-          ...target, status: "review", matchScore: finalScore,
-          source: best.source, sourceUrl: data.sourceUrl, candidateName: data.name
-        });
-        continue;
+      if (genericPage || finalScore < MIN_MATCH) {
+        console.log("    REJECTED CANDIDATE | page title: " + clean(data.name) + " | score " + finalScore.toFixed(2));
+
+        let fallback = null;
+        const retryTerms = searchTermsForTarget(target);
+        for (const term of retryTerms) {
+          const candidate = await webSearch(page, term);
+          if (!candidate || candidate.url === best.url || candidate.score < MIN_MATCH) continue;
+          try {
+            const retryData = await extractProduct(page, candidate.url);
+            const retryScore = scoreMatch(target.name, retryData.name);
+            if (!looksLikeGenericProductName(retryData.name) && retryScore >= MIN_MATCH) {
+              fallback = { ...candidate, data: retryData, score: retryScore };
+              break;
+            }
+          } catch {}
+        }
+
+        if (!fallback) {
+          results.push({
+            ...target, status: "NO_MATCH", matchScore: finalScore,
+            source: best.source, candidateUrl: best.url, candidateName: data.name,
+            reason: "Candidate rejected: generic/non-product page or insufficient product-title match"
+          });
+          continue;
+        }
+
+        best = fallback;
+        data = fallback.data;
+        finalScore = fallback.score;
       }
 
-      const images = await saveImages(data.images, data.sourceUrl, target.id || i + 1);
+      const images = await saveImages(data.images, data.sourceUrl, target.name, target.id || i + 1);
       const description = clean(data.description);
       const shortDescription = description.length > 500
         ? description.slice(0, 497).replace(/\s+\S*$/, "") + "..."
         : description;
 
+      const specs = data.specs || {};
+      const missing = [
+        !description ? "description" : "",
+        !Object.keys(specs).length ? "specifications" : "",
+        !images.length ? "images" : ""
+      ].filter(Boolean);
+
       results.push({
         ...target,
-        status: "matched",
+        status: missing.length ? "PARTIAL" : "MATCHED",
+        reason: missing.length ? "Missing: " + missing.join(", ") : "",
         matchScore: Number(finalScore.toFixed(4)),
         source: best.source,
         sourceUrl: data.sourceUrl,
@@ -618,14 +892,16 @@ async function main() {
     } catch (e) {
       console.log("    ERROR: " + e.message);
       results.push({
-        ...target, status: "error", error: e.message,
+        ...target, status: "ERROR", error: e.message,
         source: best.source, sourceUrl: best.url, matchScore: best.score
       });
     }
   }
 
   await browser.close();
-  saveOutputs(results);
+  const merged = new Map(previous);
+  for (const r of results) merged.set(productKey(r), r);
+  saveOutputs([...merged.values()], inventory);
 
   const counts = results.reduce((a, r) => {
     a[r.status] = (a[r.status] || 0) + 1;
@@ -634,6 +910,10 @@ async function main() {
 
   console.log("\n=== COMPLETE ===");
   console.log(JSON.stringify(counts, null, 2));
+  console.log("Image inventory: scraper/output/product_image_inventory.csv");
+  console.log("Image-present products (excluded): scraper/output/image_present.csv");
+  console.log("Image-missing products (eligible): scraper/output/image_missing.csv");
+  console.log("Status: scraper/output/product_enrichment_status.csv");
   console.log("Output: scraper/output/enriched_products_woocommerce.csv");
   console.log("Details: scraper/output/enriched_products.json");
 }
