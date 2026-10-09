@@ -731,8 +731,14 @@ async function main() {
   if (LIMIT > 0) runTargets = runTargets.slice(0, LIMIT);
   console.log("To process this run: " + runTargets.length);
 
+  // Hard safety invariant: no product with an existing image may reach the scraper.
+  if (runTargets.some(p => p.hasExistingImage)) {
+    throw new Error("Safety stop: image-present product entered the enrichment queue.");
+  }
+
   if (!runTargets.length) {
-    console.log("No target products found.");
+    console.log("No unprocessed image-missing products found.");
+    saveOutputs([...previous.values()], inventory);
     return;
   }
 
