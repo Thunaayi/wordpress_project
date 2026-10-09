@@ -22,7 +22,6 @@ function cliValue(name) {
 const LIMIT = Number(cliValue("limit") || process.env.ENRICH_LIMIT || 0);
 const START = Number(cliValue("start") || process.env.ENRICH_START || 0);
 const ALLOW_UNLIMITED = process.env.ENRICH_ALLOW_UNLIMITED === "1";
-const ONLY_MISSING = process.env.ENRICH_ALL !== "1";
 const STATUS_FILE = path.join(OUTPUT_DIR, "product_enrichment_status.csv");
 const MASTER_JSON = path.join(OUTPUT_DIR, "product_enrichment_status.json");
 const MIN_MATCH = Number(process.env.ENRICH_MIN_MATCH || 0.72);
@@ -575,6 +574,15 @@ function hasStructuredSpecs(value) {
     /\b\d+(?:\.\d+)?\s*(?:mm|cm|ghz|mhz|gb|tb|w|rpm|ddr[3456]|pcie|usb)\b/i.test(plain);
 }
 
+function hasImageValue(value) {
+  const imageValue = clean(value);
+  if (!imageValue) return false;
+  if (/^(none|null|n\/a|na|no image|no images|not available|-)$/i.test(imageValue)) return false;
+  // Any populated WooCommerce Images field counts as an existing image. This
+  // intentionally includes Techistics WordPress media URLs and multiple URLs.
+  return true;
+}
+
 function hasExistingSpecs(row) {
   const entries = Object.entries(row);
 
@@ -613,7 +621,19 @@ function hasExistingSpecs(row) {
 function loadInventory() {
   if (!fs.existsSync(INPUT_FILE)) throw new Error("Input CSV not found: " + INPUT_FILE);
   return parse(fs.readFileSync(INPUT_FILE, "utf8"), { columns:true, skip_empty_lines:true, relax_column_count:true, bom:true })
-    .map((r,i) => ({ index:i, raw:r, id:clean(r.ID||r.id), sku:clean(r.SKU||r.sku), name:clean(r.Name||r.name), category:clean(r.Categories||r.Category||r.category), existingImages:clean(r.Images||r.images), existingDescription:clean(r.Description||r.description), existingShortDescription:clean(r["Short description"]||r.ShortDescription||""), existingSpecs:hasExistingSpecs(r) }))
+    .map((r,i) => {
+      const existingImages = clean(r.Images || r.images);
+      const hasImage = hasImageValue(existingImages);
+      const existingDescription = clean(r.Description || r.description);
+      const existingShortDescription = clean(r["Short description"] || r.ShortDescription || "");
+      return {
+        index: i, raw: r, id: clean(r.ID || r.id), sku: clean(r.SKU || r.sku),
+        name: clean(r.Name || r.name), category: clean(r.Categories || r.Category || r.category),
+        existingImages, hasExistingImage: hasImage, imageStatus: hasImage ? "HAS_IMAGE" : "MISSING_IMAGE",
+        existingDescription, existingShortDescription, existingSpecs: hasExistingSpecs(r),
+        hasExistingDescription: Boolean(stripHtml(existingDescription || existingShortDescription))
+      };
+    })
     .filter(p => p.name);
 }
 
@@ -634,8 +654,34 @@ function loadPreviousResults() {
 
 function saveOutputs(results, inventory) {
   fs.mkdirSync(OUTPUT_DIR,{recursive:true});
-  const byKey=new Map(results.map(r=>[productKey(r),r]));
-  const targets=inventory.filter(p => !p.existingImages || !p.existingSpecs);
+  const byKey = new Map(results.map(r => [productKey(r), r]));
+
+  // Export the inventory split separately for review. These reports are
+  // classification-only: image-present products are never sent to enrichment.
+  const imageHeaders = ["ID", "SKU", "Name", "Category", "Image status", "Existing image URL", "Existing specs", "Existing description"];
+  const imageRows = inventory.map(p => [
+    p.id, p.sku, p.name, p.category || "", p.imageStatus, p.existingImages || "",
+    p.existingSpecs ? "YES" : "NO", p.hasExistingDescription ? "YES" : "NO"
+  ]);
+  const writeCsv = (file, headers, rows) => {
+    fs.writeFileSync(path.join(OUTPUT_DIR, file), [headers, ...rows].map(row => row.map(csvEscape).join(",")).join("\n") + "\n");
+  };
+  writeCsv("product_image_inventory.csv", imageHeaders, imageRows);
+  writeCsv("image_present.csv", imageHeaders, imageRows.filter(row => row[4] === "HAS_IMAGE"));
+  writeCsv("image_missing.csv", imageHeaders, imageRows.filter(row => row[4] === "MISSING_IMAGE"));
+  fs.writeFileSync(path.join(OUTPUT_DIR, "product_image_inventory.json"), JSON.stringify({
+    generatedAt: new Date().toISOString(),
+    total: inventory.length,
+    imagePresent: inventory.filter(p => p.hasExistingImage).length,
+    imageMissing: inventory.filter(p => !p.hasExistingImage).length,
+    products: inventory.map(p => ({
+      id: p.id, sku: p.sku, name: p.name, category: p.category,
+      imageStatus: p.imageStatus, existingImages: p.existingImages,
+      existingSpecs: p.existingSpecs, hasExistingDescription: p.hasExistingDescription
+    }))
+  }, null, 2));
+
+  const targets = inventory.filter(p => !p.hasExistingImage);
   const master=targets.map(p=>byKey.get(productKey(p)) || {...p,status:"PENDING",reason:"Not processed yet"});
   const headers=["ID","SKU","Name","Category","Status","Match score","Matched retailer","Matched product","Matched URL","Images found","Specs found","Description found","Reason"];
   const rows=[headers.join(",")];
@@ -664,19 +710,20 @@ function saveOutputs(results, inventory) {
 async function main() {
   console.log("=== Techistics product enrichment ===");
   console.log("Input: " + INPUT_FILE);
-  console.log("Mode: " + (ONLY_MISSING ? "missing fields only" : "all products"));
+  console.log("Mode: products without an existing image ONLY (image-present products are never enriched)");
   console.log("Minimum match: " + MIN_MATCH);
 
   const inventory = loadInventory();
   const previous = loadPreviousResults();
-  const candidateTargets = ONLY_MISSING ? inventory.filter(p => !p.existingImages || !p.existingSpecs) : inventory;
+  const candidateTargets = inventory.filter(p => !p.hasExistingImage);
   const targets = candidateTargets.filter(p => {
     const prior = previous.get(productKey(p));
     const priorStatus = String(prior?.status || "").toUpperCase();
     return !prior || !["MATCHED", "SKIPPED"].includes(priorStatus);
   });
   console.log("Inventory: " + inventory.length);
-  console.log("Missing-field candidates: " + candidateTargets.length);
+  console.log("Products with existing images (excluded): " + inventory.filter(p => p.hasExistingImage).length);
+  console.log("Products missing images (enrichment candidates): " + candidateTargets.length);
   console.log("Configured start: " + START);
   console.log("Configured limit: " + (LIMIT || "UNLIMITED"));
 
@@ -857,6 +904,9 @@ async function main() {
 
   console.log("\n=== COMPLETE ===");
   console.log(JSON.stringify(counts, null, 2));
+  console.log("Image inventory: scraper/output/product_image_inventory.csv");
+  console.log("Image-present products (excluded): scraper/output/image_present.csv");
+  console.log("Image-missing products (eligible): scraper/output/image_missing.csv");
   console.log("Status: scraper/output/product_enrichment_status.csv");
   console.log("Output: scraper/output/enriched_products_woocommerce.csv");
   console.log("Details: scraper/output/enriched_products.json");
