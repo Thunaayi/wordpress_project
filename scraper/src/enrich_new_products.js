@@ -157,7 +157,7 @@ function searchTermsForTarget(target) {
   const terms = [];
   if (target.sku && target.sku.length >= 4) terms.push(target.sku);
   terms.push(...queryVariants(target.name));
-  return [...new Set(terms.map(clean).filter(Boolean))];
+  return [...new Set(terms.map(clean).filter(Boolean))].slice(0, 4);
 }
 
 function looksLikeGenericProductName(name) {
@@ -201,7 +201,7 @@ async function searchSite(page, source, productName) {
 
   for (const query of [clean(productName)]) {
     try {
-      await goto(page, source.search(query), 1, 20000);
+      await goto(page, source.search(query), 1, 15000);
 
       const links = await page.$$eval("a[href]", anchors => anchors.map(a => ({
         href: a.href,
@@ -237,7 +237,7 @@ async function webSearch(page, productName) {
 
   for (const searchUrl of engines) {
     try {
-      await goto(page, searchUrl, 1, 20000);
+      await goto(page, searchUrl, 1, 15000);
       const links = await page.$$eval("a[href]", anchors => anchors.map(a => ({
         href: a.href,
         text: (a.innerText || a.textContent || a.getAttribute("aria-label") || "").trim()
@@ -849,6 +849,7 @@ async function main() {
     for (const term of searchTerms) {
       console.log("    Searching retailer sources for: " + term);
       for (const source of SOURCES) {
+        console.log("      -> " + source.name);
         try {
           const candidate = await searchSite(page, source, term);
           if (candidate && (!best || candidate.score > best.score)) best = candidate;
