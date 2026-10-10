@@ -686,7 +686,8 @@ function loadInventory() {
         name: clean(r.Name || r.name), category: clean(r.Categories || r.Category || r.category),
         existingImages, hasExistingImage: hasImage, imageStatus: hasImage ? "HAS_IMAGE" : "MISSING_IMAGE",
         existingDescription, existingShortDescription, existingSpecs: hasExistingSpecs(r),
-        hasExistingDescription: Boolean(stripHtml(existingDescription || existingShortDescription))
+        hasExistingDescription: Boolean(stripHtml(existingDescription)),
+      hasExistingShortDescription: Boolean(stripHtml(existingShortDescription))
       };
     })
     .filter(p => p.name);
@@ -736,7 +737,7 @@ function saveOutputs(results, inventory) {
     }))
   }, null, 2));
 
-  const targets = inventory.filter(p => !p.hasExistingImage || !p.existingSpecs || !p.hasExistingDescription);
+  const targets = inventory.filter(p => !p.hasExistingImage || !p.existingSpecs || !p.hasExistingDescription || !p.hasExistingShortDescription);
   const master=targets.map(p=>byKey.get(productKey(p)) || {...p,status:"PENDING",reason:"Not processed yet"});
   const headers=["ID","SKU","Name","Category","Status","Match score","Matched retailer","Matched product","Matched URL","Images found","Specs found","Description found","Reason"];
   const rows=[headers.join(",")];
@@ -770,7 +771,7 @@ async function main() {
 
   const inventory = loadInventory();
   const previous = loadPreviousResults();
-  const candidateTargets = inventory.filter(p => !p.hasExistingImage || !p.existingSpecs || !p.hasExistingDescription);
+  const candidateTargets = inventory.filter(p => !p.hasExistingImage || !p.existingSpecs || !p.hasExistingDescription || !p.hasExistingShortDescription);
   const targets = candidateTargets.filter(p => {
     const prior = previous.get(productKey(p));
     const priorStatus = String(prior?.status || "").toUpperCase();
@@ -787,7 +788,7 @@ async function main() {
   console.log("To process this run: " + runTargets.length);
 
   // Fully populated products must never enter the queue.
-  if (runTargets.some(p => p.hasExistingImage && p.existingSpecs && p.hasExistingDescription)) {
+  if (runTargets.some(p => p.hasExistingImage && p.existingSpecs && p.hasExistingDescription && p.hasExistingShortDescription)) {
     throw new Error("Safety stop: fully populated product entered the enrichment queue.");
   }
 
