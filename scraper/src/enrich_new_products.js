@@ -175,11 +175,11 @@ function isProductUrl(href, domain) {
   }
 }
 
-async function goto(page, url, attempts = 3) {
+async function goto(page, url, attempts = 3, timeout = 45000) {
   let last;
   for (let i = 0; i < attempts; i++) {
     try {
-      const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
+      const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout });
       if (response && response.status() < 500) {
         await page.waitForFunction(
           () => document.readyState === "complete" || document.readyState === "interactive",
@@ -201,7 +201,7 @@ async function searchSite(page, source, productName) {
 
   for (const query of [clean(productName)]) {
     try {
-      await goto(page, source.search(query), 2);
+      await goto(page, source.search(query), 1, 20000);
 
       const links = await page.$$eval("a[href]", anchors => anchors.map(a => ({
         href: a.href,
@@ -237,7 +237,7 @@ async function webSearch(page, productName) {
 
   for (const searchUrl of engines) {
     try {
-      await goto(page, searchUrl, 2);
+      await goto(page, searchUrl, 1, 20000);
       const links = await page.$$eval("a[href]", anchors => anchors.map(a => ({
         href: a.href,
         text: (a.innerText || a.textContent || a.getAttribute("aria-label") || "").trim()
@@ -847,20 +847,25 @@ async function main() {
 
     // Exhaust every configured retailer for each SKU/model/name query before NO_MATCH.
     for (const term of searchTerms) {
+      console.log("    Searching retailer sources for: " + term);
       for (const source of SOURCES) {
         try {
           const candidate = await searchSite(page, source, term);
           if (candidate && (!best || candidate.score > best.score)) best = candidate;
         } catch (e) { console.log("    Search issue on " + source.name + ": " + e.message); }
+        if (best && best.score >= 0.96) break;
       }
-    }
-    // Search engines are a second pass, even if retailer search found a weak candidate.
-    for (const term of searchTerms) {
-      try {
-        const webCandidate = await webSearch(page, term);
-        if (webCandidate && (!best || webCandidate.score > best.score)) best = webCandidate;
-      } catch (e) {}
       if (best && best.score >= 0.96) break;
+    }
+    // Search engines are a second pass when retailer searches have not found a confident match.
+    if (!best || best.score < MIN_MATCH) {
+      for (const term of searchTerms) {
+        try {
+          const webCandidate = await webSearch(page, term);
+          if (webCandidate && (!best || webCandidate.score > best.score)) best = webCandidate;
+        } catch (e) {}
+        if (best && best.score >= 0.96) break;
+      }
     }
 
     if (!best || best.score < MIN_MATCH) {
@@ -885,9 +890,24 @@ async function main() {
 
         let fallback = null;
         const retryTerms = searchTermsForTarget(target);
+        // If the first candidate is a wrong variant/generic page, revisit other retailers
+        // directly before giving up; then try Google/Bing results.
+        const alternatives = [];
         for (const term of retryTerms) {
-          const candidate = await webSearch(page, term);
-          if (!candidate || candidate.url === best.url || candidate.score < MIN_MATCH) continue;
+          for (const source of SOURCES) {
+            try {
+              const candidate = await searchSite(page, source, term);
+              if (candidate && candidate.url !== best.url && candidate.score >= MIN_MATCH && !alternatives.some(x => x.url === candidate.url)) alternatives.push(candidate);
+            } catch {}
+          }
+        }
+        for (const term of retryTerms) {
+          try {
+            const candidate = await webSearch(page, term);
+            if (candidate && candidate.url !== best.url && candidate.score >= MIN_MATCH && !alternatives.some(x => x.url === candidate.url)) alternatives.push(candidate);
+          } catch {}
+        }
+        for (const candidate of alternatives) {
           try {
             const retryData = await extractProduct(page, candidate.url);
             const retryScore = scoreMatch(target.name, retryData.name);
