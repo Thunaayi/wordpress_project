@@ -25,6 +25,8 @@ const ALLOW_UNLIMITED = process.env.ENRICH_ALLOW_UNLIMITED === "1";
 const STATUS_FILE = path.join(OUTPUT_DIR, "product_enrichment_status.csv");
 const MASTER_JSON = path.join(OUTPUT_DIR, "product_enrichment_status.json");
 const MIN_MATCH = Number(process.env.ENRICH_MIN_MATCH || 0.72);
+const RETRY_NO_MATCH = argv.includes("--retry-no-match");
+const RETRY_PARTIAL = argv.includes("--retry-partial");
 
 const SOURCES = [
   { name: "czone.com.pk", domain: "czone.com.pk", search: q => "https://www.czone.com.pk/search.aspx?search=" + encodeURIComponent(q) },
@@ -197,7 +199,7 @@ async function goto(page, url, attempts = 3) {
 async function searchSite(page, source, productName) {
   let best = null;
 
-  for (const query of queryVariants(productName)) {
+  for (const query of [clean(productName)]) {
     try {
       await goto(page, source.search(query), 2);
 
@@ -686,6 +688,7 @@ function loadInventory() {
         name: clean(r.Name || r.name), category: clean(r.Categories || r.Category || r.category),
         existingImages, hasExistingImage: hasImage, imageStatus: hasImage ? "HAS_IMAGE" : "MISSING_IMAGE",
         existingDescription, existingShortDescription, existingSpecs: hasExistingSpecs(r),
+        existingSpecValues: Object.fromEntries(Object.entries(r).filter(([key, value]) => clean(value) && (/^(specifications?|specs?|features?|technical\\s*details?)$/i.test(String(key).trim()) || /^attribute\\s*\\d+\\s*(name|value)$/i.test(String(key).trim())))),
         hasExistingDescription: Boolean(stripHtml(existingDescription)),
       hasExistingShortDescription: Boolean(stripHtml(existingShortDescription))
       };
@@ -737,7 +740,7 @@ function saveOutputs(results, inventory) {
     }))
   }, null, 2));
 
-  const targets = inventory.filter(p => !p.hasExistingImage || !p.existingSpecs || !p.hasExistingDescription || !p.hasExistingShortDescription);
+  const targets = inventory.filter(p => !p.hasExistingImage);
   const master=targets.map(p=>byKey.get(productKey(p)) || {...p,status:"PENDING",reason:"Not processed yet"});
   const headers=["ID","SKU","Name","Category","Status","Match score","Matched retailer","Matched product","Matched URL","Images found","Specs found","Description found","Reason"];
   const rows=[headers.join(",")];
@@ -766,20 +769,25 @@ function saveOutputs(results, inventory) {
 async function main() {
   console.log("=== Techistics product enrichment ===");
   console.log("Input: " + INPUT_FILE);
-  console.log("Mode: fill missing images/specs/descriptions only; preserve populated fields");
+  console.log("Mode: IMAGE-MISSING products only; collect images, descriptions and specs together");
+  console.log("Retry previous NO_MATCH: " + RETRY_NO_MATCH + " | retry PARTIAL: " + RETRY_PARTIAL);
   console.log("Minimum match: " + MIN_MATCH);
 
   const inventory = loadInventory();
   const previous = loadPreviousResults();
-  const candidateTargets = inventory.filter(p => !p.hasExistingImage || !p.existingSpecs || !p.hasExistingDescription || !p.hasExistingShortDescription);
+  const candidateTargets = inventory.filter(p => !p.hasExistingImage);
   const targets = candidateTargets.filter(p => {
     const prior = previous.get(productKey(p));
     const priorStatus = String(prior?.status || "").toUpperCase();
-    return !prior || !["MATCHED", "SKIPPED"].includes(priorStatus);
+    if (prior && Array.isArray(prior.images) && prior.images.length > 0 && !RETRY_PARTIAL) return false;
+    if (priorStatus === "MATCHED" || priorStatus === "SKIPPED") return false;
+    if (priorStatus === "NO_MATCH" && !RETRY_NO_MATCH) return false;
+    if (priorStatus === "PARTIAL" && !RETRY_PARTIAL) return false;
+    return true;
   });
   console.log("Inventory: " + inventory.length);
   console.log("Products with existing images (images preserved): " + inventory.filter(p => p.hasExistingImage).length);
-  console.log("Products missing one or more content fields (enrichment candidates): " + candidateTargets.length);
+  console.log("Products missing images (only eligible products): " + candidateTargets.length);
   console.log("Configured start: " + START);
   console.log("Configured limit: " + (LIMIT || "UNLIMITED"));
 
@@ -788,8 +796,8 @@ async function main() {
   console.log("To process this run: " + runTargets.length);
 
   // Fully populated products must never enter the queue.
-  if (runTargets.some(p => p.hasExistingImage && p.existingSpecs && p.hasExistingDescription && p.hasExistingShortDescription)) {
-    throw new Error("Safety stop: fully populated product entered the enrichment queue.");
+  if (runTargets.some(p => p.hasExistingImage)) {
+    throw new Error("Safety stop: product with an existing image entered the enrichment queue.");
   }
 
   if (!runTargets.length) {
@@ -821,6 +829,13 @@ async function main() {
   });
 
   const results = [];
+  const checkpoint = result => {
+    previous.set(productKey(result), result);
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    fs.writeFileSync(path.join(OUTPUT_DIR, "enriched_products.json"), JSON.stringify({
+      generatedAt: new Date().toISOString(), total: previous.size, results: [...previous.values()]
+    }, null, 2));
+  };
 
   for (let i = 0; i < runTargets.length; i++) {
     const target = runTargets[i];
@@ -830,44 +845,30 @@ async function main() {
 
     const searchTerms = searchTermsForTarget(target);
 
-    // SKU/model searches are much safer than broad product-name searches.
-    for (const term of searchTerms.slice(0, 1)) {
+    // Exhaust every configured retailer for each SKU/model/name query before NO_MATCH.
+    for (const term of searchTerms) {
       for (const source of SOURCES) {
-        const candidate = await searchSite(page, source, term);
-        if (candidate && (!best || candidate.score > best.score)) best = candidate;
-        if (best && best.score >= 0.96) break;
-      }
-      if (best && best.score >= 0.96) break;
-    }
-
-    // Fall back to product-name searches when the SKU is not indexed.
-    if (!best || best.score < 0.92) {
-      for (const term of searchTerms.slice(target.sku && target.sku.length >= 4 ? 1 : 0)) {
-        for (const source of SOURCES) {
+        try {
           const candidate = await searchSite(page, source, term);
           if (candidate && (!best || candidate.score > best.score)) best = candidate;
-          if (best && best.score >= 0.96) break;
-        }
-        if (best && best.score >= 0.96) break;
+        } catch (e) { console.log("    Search issue on " + source.name + ": " + e.message); }
       }
     }
-
-    // External search is a last resort, not the first matcher.
-    if (!best || best.score < MIN_MATCH) {
-      for (const term of searchTerms) {
+    // Search engines are a second pass, even if retailer search found a weak candidate.
+    for (const term of searchTerms) {
+      try {
         const webCandidate = await webSearch(page, term);
         if (webCandidate && (!best || webCandidate.score > best.score)) best = webCandidate;
-        if (best && best.score >= 0.92) break;
-      }
+      } catch (e) {}
+      if (best && best.score >= 0.96) break;
     }
 
     if (!best || best.score < MIN_MATCH) {
       console.log("    NOT FOUND (best: " + (best ? best.score.toFixed(2) : "none") + ")");
-      results.push({
-        ...target, status: "NO_MATCH",
-        matchScore: best ? best.score : 0,
-        candidateUrl: best?.url || "", candidateName: best?.matchedText || "", reason: "No sufficiently confident product-page match"
-      });
+      const failed = { ...target, status: "NO_MATCH", attempts: Number(previous.get(productKey(target))?.attempts || 0) + 1,
+        matchScore: best ? best.score : 0, candidateUrl: best?.url || "", candidateName: best?.matchedText || "",
+        reason: "Tried all configured retailers and search engines; no sufficiently confident product-page match", lastAttemptAt: new Date().toISOString() };
+      results.push(failed); checkpoint(failed);
       continue;
     }
 
@@ -898,11 +899,11 @@ async function main() {
         }
 
         if (!fallback) {
-          results.push({
-            ...target, status: "NO_MATCH", matchScore: finalScore,
-            source: best.source, candidateUrl: best.url, candidateName: data.name,
-            reason: variantConflict ? "Candidate rejected: conflicting colour/finish variant" : "Candidate rejected: generic/non-product page or insufficient product-title match"
-          });
+          const failed = { ...target, status: "NO_MATCH", attempts: Number(previous.get(productKey(target))?.attempts || 0) + 1,
+            matchScore: finalScore, source: best.source, candidateUrl: best.url, candidateName: data.name,
+            reason: variantConflict ? "Candidate rejected: conflicting colour/finish variant; alternate sources exhausted" : "Candidate rejected after alternate sources exhausted",
+            lastAttemptAt: new Date().toISOString() };
+          results.push(failed); checkpoint(failed);
           continue;
         }
 
@@ -918,14 +919,14 @@ async function main() {
       const description = target.hasExistingDescription ? (target.existingDescription || target.existingShortDescription) : scrapedDescription;
       const shortDescription = target.existingShortDescription || scrapedShortDescription;
       const images = target.hasExistingImage ? [] : scrapedImages;
-      const specs = target.existingSpecs ? {} : (data.specs || {});
+      const specs = target.existingSpecs ? target.existingSpecValues : (data.specs || {});
       const missing = [
         !description ? "description" : "",
         !(target.existingSpecs || Object.keys(specs).length) ? "specifications" : "",
         !(target.hasExistingImage || images.length) ? "images" : ""
       ].filter(Boolean);
 
-      results.push({
+      const completed = {
         ...target,
         status: missing.length ? "PARTIAL" : "MATCHED",
         reason: missing.length ? "Missing: " + missing.join(", ") : "",
@@ -939,8 +940,12 @@ async function main() {
         images: target.hasExistingImage ? (target.existingImages ? [target.existingImages] : []) : images,
         brand: data.brand || "",
         sourceSku: data.sku || "",
-        sourcePrice: data.price || ""
-      });
+        sourcePrice: data.price || "",
+        attempts: Number(previous.get(productKey(target))?.attempts || 0) + 1,
+        lastAttemptAt: new Date().toISOString()
+      };
+      results.push(completed);
+      checkpoint(completed);
 
       console.log(
         "    MATCHED | score " + finalScore.toFixed(2) +
@@ -949,10 +954,9 @@ async function main() {
       );
     } catch (e) {
       console.log("    ERROR: " + e.message);
-      results.push({
-        ...target, status: "ERROR", error: e.message,
-        source: best.source, sourceUrl: best.url, matchScore: best.score
-      });
+      const failed = { ...target, status: "ERROR", error: e.message, source: best.source, sourceUrl: best.url,
+        attempts: Number(previous.get(productKey(target))?.attempts || 0) + 1, lastAttemptAt: new Date().toISOString(), matchScore: best.score };
+      results.push(failed); checkpoint(failed);
     }
   }
 
