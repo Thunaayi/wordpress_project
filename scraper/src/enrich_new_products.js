@@ -91,7 +91,16 @@ function modelTokens(s) {
   return criticalTokens(s).filter(t => /\d/.test(t) || /^(rtx|gtx|rx|ryzen|core|nvme|m2|pcie)/.test(t));
 }
 
+const VARIANT_MARKERS = ["black", "white", "moonlight", "starry", "blue", "pink", "purple", "silver", "white cheese", "black contour", "black lines", "pink contour", "white contour", "red", "green", "grey", "gray", "gold", "beige"];
+function variantMarkers(value) { const n = " " + normalize(value) + " "; return VARIANT_MARKERS.filter(marker => n.includes(" " + marker + " ")); }
+function hasVariantConflict(target, candidate) {
+  const aliases = { "black contour": "black", "black lines": "black", "white contour": "white", "white cheese": "white", "gray": "grey" };
+  const a = new Set(variantMarkers(target).map(v => aliases[v] || v));
+  const b = new Set(variantMarkers(candidate).map(v => aliases[v] || v));
+  return a.size > 0 && b.size > 0 && ![...a].some(v => b.has(v));
+}
 function scoreMatch(target, candidate) {
+  if (hasVariantConflict(target, candidate)) return 0;
   const a = tokens(target);
   const b = tokens(candidate);
   if (!a.size || !b.size) return 0;
@@ -282,17 +291,17 @@ async function extractProductOnce(page, url) {
       return "";
     };
 
-    const description = firstText([
-      ".woocommerce-product-details__short-description",
-      ".short-description",
-      ".product-short-description",
-      ".product-description",
-      ".description",
-      ".product-details .description",
-      ".product-desc",
-      ".tab-content.description",
-      "[itemprop='description']"
+    const shortDescription = firstText([
+      ".woocommerce-product-details__short-description", ".short-description",
+      ".product-short-description", ".summary .description", "[itemprop='description']"
     ]) || meta("og:description") || meta("description") || p.description || "";
+    // Long-form product detail tabs often contain technical details omitted from the summary.
+    const description = firstText([
+      "#tab-description", ".woocommerce-Tabs-panel--description", ".woocommerce-tabs .panel.entry-content",
+      "[id*='description'].tab-pane", ".product-description-content", ".product-detail-description",
+      ".product-details-description", ".product-description", ".description", ".product-details .description",
+      ".product-desc", ".tab-content.description", "[itemprop='description']"
+    ]) || shortDescription;
 
     const title = firstText([
       "h1.product_title",
@@ -449,6 +458,7 @@ async function extractProductOnce(page, url) {
     return {
       name: title,
       description,
+      shortDescription,
       price: String(price || ""),
       brand: String(brand || ""),
       sku: String(sku || ""),
@@ -720,7 +730,7 @@ function saveOutputs(results, inventory) {
     }))
   }, null, 2));
 
-  const targets = inventory.filter(p => !p.hasExistingImage);
+  const targets = inventory.filter(p => !p.hasExistingImage || !p.existingSpecs || !p.hasExistingDescription);
   const master=targets.map(p=>byKey.get(productKey(p)) || {...p,status:"PENDING",reason:"Not processed yet"});
   const headers=["ID","SKU","Name","Category","Status","Match score","Matched retailer","Matched product","Matched URL","Images found","Specs found","Description found","Reason"];
   const rows=[headers.join(",")];
@@ -740,7 +750,7 @@ function saveOutputs(results, inventory) {
   for(const r of master) detailRows.push([r.id,r.sku,r.name,r.category||"",r.shortDescription||"",r.description||"",(r.images||[]).join(", "),JSON.stringify(r.specs||{}),r.sourceUrl||"",r.source||"",r.matchScore||0,r.status||"",r.reason||""].map(csvEscape).join(","));
   fs.writeFileSync(path.join(OUTPUT_DIR,"enriched_products.csv"),detailRows.join("\n")+"\n");
 
-  const wc=["ID","SKU","Name","Short description","Description","Images"].join(",")+"\n"+master.filter(x=>x.status==="MATCHED"&&x.id).map(r=>[r.id,r.sku,r.name,r.shortDescription||"",r.description||"",(r.images||[]).join(", ")].map(csvEscape).join(",")).join("\n");
+  const wc=["ID","SKU","Name","Short description","Description","Images","Specifications"].join(",")+"\n"+master.filter(x=>x.status==="MATCHED"&&x.id).map(r=>[r.id,r.sku,r.name,r.shortDescription||"",r.description||"",(r.images||[]).join(", "),JSON.stringify(r.specs||{})].map(csvEscape).join(",")).join("\n");
   fs.writeFileSync(path.join(OUTPUT_DIR,"enriched_products_woocommerce.csv"),wc+"\n");
   fs.writeFileSync(path.join(OUTPUT_DIR,"enriched_products.json"),JSON.stringify({generatedAt:new Date().toISOString(),total:master.length,results:master},null,2));
   return master;
@@ -749,20 +759,20 @@ function saveOutputs(results, inventory) {
 async function main() {
   console.log("=== Techistics product enrichment ===");
   console.log("Input: " + INPUT_FILE);
-  console.log("Mode: products without an existing image ONLY (image-present products are never enriched)");
+  console.log("Mode: fill missing images/specs/descriptions only; preserve populated fields");
   console.log("Minimum match: " + MIN_MATCH);
 
   const inventory = loadInventory();
   const previous = loadPreviousResults();
-  const candidateTargets = inventory.filter(p => !p.hasExistingImage);
+  const candidateTargets = inventory.filter(p => !p.hasExistingImage || !p.existingSpecs || !p.hasExistingDescription);
   const targets = candidateTargets.filter(p => {
     const prior = previous.get(productKey(p));
     const priorStatus = String(prior?.status || "").toUpperCase();
     return !prior || !["MATCHED", "SKIPPED"].includes(priorStatus);
   });
   console.log("Inventory: " + inventory.length);
-  console.log("Products with existing images (excluded): " + inventory.filter(p => p.hasExistingImage).length);
-  console.log("Products missing images (enrichment candidates): " + candidateTargets.length);
+  console.log("Products with existing images (images preserved): " + inventory.filter(p => p.hasExistingImage).length);
+  console.log("Products missing one or more content fields (enrichment candidates): " + candidateTargets.length);
   console.log("Configured start: " + START);
   console.log("Configured limit: " + (LIMIT || "UNLIMITED"));
 
@@ -770,13 +780,13 @@ async function main() {
   if (LIMIT > 0) runTargets = runTargets.slice(0, LIMIT);
   console.log("To process this run: " + runTargets.length);
 
-  // Hard safety invariant: no product with an existing image may reach the scraper.
-  if (runTargets.some(p => p.hasExistingImage)) {
-    throw new Error("Safety stop: image-present product entered the enrichment queue.");
+  // Fully populated products must never enter the queue.
+  if (runTargets.some(p => p.hasExistingImage && p.existingSpecs && p.hasExistingDescription)) {
+    throw new Error("Safety stop: fully populated product entered the enrichment queue.");
   }
 
   if (!runTargets.length) {
-    console.log("No unprocessed image-missing products found.");
+    console.log("No unprocessed products with missing content fields found.");
     saveOutputs([...previous.values()], inventory);
     return;
   }
@@ -858,11 +868,12 @@ async function main() {
       console.log("    " + best.source + " " + best.score.toFixed(2) + " -> " + best.url);
       let data = await extractProduct(page, best.url);
       const pageScore = scoreMatch(target.name, data.name);
+      const variantConflict = hasVariantConflict(target.name, data.name);
       const genericPage = looksLikeGenericProductName(data.name);
       let finalScore = pageScore;
 
-      if (genericPage || finalScore < MIN_MATCH) {
-        console.log("    REJECTED CANDIDATE | page title: " + clean(data.name) + " | score " + finalScore.toFixed(2));
+      if (variantConflict || genericPage || finalScore < MIN_MATCH) {
+        console.log("    REJECTED CANDIDATE" + (variantConflict ? " | conflicting colour/finish variant" : "") + " | page title: " + clean(data.name) + " | score " + finalScore.toFixed(2));
 
         let fallback = null;
         const retryTerms = searchTermsForTarget(target);
@@ -872,7 +883,7 @@ async function main() {
           try {
             const retryData = await extractProduct(page, candidate.url);
             const retryScore = scoreMatch(target.name, retryData.name);
-            if (!looksLikeGenericProductName(retryData.name) && retryScore >= MIN_MATCH) {
+            if (!hasVariantConflict(target.name, retryData.name) && !looksLikeGenericProductName(retryData.name) && retryScore >= MIN_MATCH) {
               fallback = { ...candidate, data: retryData, score: retryScore };
               break;
             }
@@ -883,7 +894,7 @@ async function main() {
           results.push({
             ...target, status: "NO_MATCH", matchScore: finalScore,
             source: best.source, candidateUrl: best.url, candidateName: data.name,
-            reason: "Candidate rejected: generic/non-product page or insufficient product-title match"
+            reason: variantConflict ? "Candidate rejected: conflicting colour/finish variant" : "Candidate rejected: generic/non-product page or insufficient product-title match"
           });
           continue;
         }
@@ -893,17 +904,18 @@ async function main() {
         finalScore = fallback.score;
       }
 
-      const images = await saveImages(data.images, data.sourceUrl, target.name, target.id || i + 1);
-      const description = clean(data.description);
-      const shortDescription = description.length > 500
-        ? description.slice(0, 497).replace(/\s+\S*$/, "") + "..."
-        : description;
-
-      const specs = data.specs || {};
+      // Do not replace images or descriptions already present in the Techistics export.
+      const scrapedImages = target.hasExistingImage ? [] : await saveImages(data.images, data.sourceUrl, target.name, target.id || i + 1);
+      const scrapedDescription = clean(data.description);
+      const scrapedShortDescription = clean(data.shortDescription) || (scrapedDescription.length > 500 ? scrapedDescription.slice(0, 497).replace(/\s+\S*$/, "") + "..." : scrapedDescription);
+      const description = target.hasExistingDescription ? (target.existingDescription || target.existingShortDescription) : scrapedDescription;
+      const shortDescription = target.existingShortDescription || scrapedShortDescription;
+      const images = target.hasExistingImage ? [] : scrapedImages;
+      const specs = target.existingSpecs ? {} : (data.specs || {});
       const missing = [
         !description ? "description" : "",
-        !Object.keys(specs).length ? "specifications" : "",
-        !images.length ? "images" : ""
+        !(target.existingSpecs || Object.keys(specs).length) ? "specifications" : "",
+        !(target.hasExistingImage || images.length) ? "images" : ""
       ].filter(Boolean);
 
       results.push({
@@ -916,8 +928,8 @@ async function main() {
         sourceName: data.name,
         description,
         shortDescription,
-        specs: data.specs || {},
-        images,
+        specs,
+        images: target.hasExistingImage ? (target.existingImages ? [target.existingImages] : []) : images,
         brand: data.brand || "",
         sourceSku: data.sku || "",
         sourcePrice: data.price || ""
