@@ -321,6 +321,12 @@ async function extractProductOnce(page, url) {
       specs[label] = value;
     };
 
+    // Schema.org Product.additionalProperty often carries specifications even when
+    // the retailer renders them in a custom widget rather than an HTML table.
+    const properties = Array.isArray(p.additionalProperty) ? p.additionalProperty : (p.additionalProperty ? [p.additionalProperty] : []);
+    properties.forEach(property => {
+      if (property && typeof property === "object") addSpec(property.name || property.propertyID, property.value);
+    });
     document.querySelectorAll("table tr").forEach(row => {
       const cells = [...row.querySelectorAll("th,td")].map(text).filter(Boolean);
       if (cells.length >= 2) addSpec(cells[0], cells.slice(1).join(" "));
