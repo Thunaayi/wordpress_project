@@ -29,7 +29,7 @@ const RETRY_ALL = process.argv.includes("--retry-all");
 const NAV_TIMEOUT = Math.max(10000, Number(process.env.ENRICH_NAV_TIMEOUT || 35000));
 
 function clean(value) {
-  return String(value ?? "").replace(/\\s+/g, " ").trim();
+  return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
 function normalize(value) {
@@ -38,7 +38,7 @@ function normalize(value) {
 
 function csvEscape(value) {
   const s = String(value ?? "");
-  return /[",\\n\\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
 function productKey(product) {
@@ -47,7 +47,7 @@ function productKey(product) {
 
 function hasImageValue(value) {
   const imageValue = clean(value);
-  return Boolean(imageValue) && !/^(none|null|n\\/a|na|no image|no images|not available|-)$/i.test(imageValue);
+  return Boolean(imageValue) && !/^(none|null|n\/a|na|no image|no images|not available|-)$/i.test(imageValue);
 }
 
 function loadInventory() {
@@ -97,7 +97,7 @@ async function extractDetails(page, url) {
 
   return page.evaluate(() => {
     const text = element => (element?.innerText || element?.textContent || "")
-      .replace(/\\u00a0/g, " ").replace(/\\s+/g, " ").trim();
+      .replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
     const meta = selector => document.querySelector(selector)?.content || "";
     const firstText = selectors => {
       for (const selector of selectors) {
@@ -151,13 +151,13 @@ async function extractDetails(page, url) {
     ]);
 
     const cleanHtml = value => String(value || "")
-      .replace(/<script\\b[^>]*>[\\s\\S]*?<\\/script>/gi, " ")
-      .replace(/<style\\b[^>]*>[\\s\\S]*?<\\/style>/gi, " ")
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
       .replace(/<[^>]+>/g, " ")
       .replace(/&nbsp;|&#160;/gi, " ")
       .replace(/&amp;/gi, "&").replace(/&quot;/gi, '"')
       .replace(/&#39;|&apos;/gi, "'").replace(/&lt;/gi, "<")
-      .replace(/&gt;/gi, ">").replace(/\\s+/g, " ").trim();
+      .replace(/&gt;/gi, ">").replace(/\s+/g, " ").trim();
 
     const description = fullDescription ||
       cleanHtml(product.description) ||
@@ -191,7 +191,7 @@ async function extractDetails(page, url) {
       const value = row.querySelector("td,.value,[class*='value']");
       if (label && value) addSpec(text(label), text(value));
       else {
-        const match = text(row).match(/^([^:：|]{2,100})\\s*[:：|]\\s*(.{2,1000})$/);
+        const match = text(row).match(/^([^:：|]{2,100})\s*[:：|]\s*(.{2,1000})$/);
         if (match) addSpec(match[1], match[2]);
       }
     });
@@ -285,7 +285,7 @@ async function main() {
       const product = batch[index];
       const key = productKey(product);
       const sourceUrl = clean(product.sourceUrl || product.candidateUrl);
-      console.log("\\n[" + (index + 1) + "/" + batch.length + "] " + (product.name || key));
+      console.log("\n[" + (index + 1) + "/" + batch.length + "] " + (product.name || key));
 
       const row = {
         id: product.id || "", sku: product.sku || "", name: product.name || "",
@@ -376,8 +376,8 @@ async function main() {
       row.descriptionAfter ? "YES" : "NO", row.specsBefore, row.specsAfter, row.status, row.error
     ].map(csvEscape).join(","));
   }
-  fs.writeFileSync(STATUS_FILE, lines.join("\\n") + "\\n");
-  console.log("\\nSaved updated results: " + RESULTS_FILE);
+  fs.writeFileSync(STATUS_FILE, lines.join("\n") + "\n");
+  console.log("\nSaved updated results: " + RESULTS_FILE);
   console.log("Field audit: " + STATUS_FILE);
 }
 
