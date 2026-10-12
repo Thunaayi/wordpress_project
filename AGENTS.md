@@ -4,7 +4,7 @@ This file is the durable project contract. Read it before changing scraper behav
 
 ## Goal and scope
 
-Enrich the Techistics WooCommerce export with competitor product images, descriptions, and technical specifications. The export may contain around 3,000 products, but only the subset whose **original WooCommerce Images field is empty or an explicit no-image placeholder** is eligible for the main scraping queue. Do not scrape all products by default.
+Enrich the Techistics WooCommerce export with competitor product images, descriptions, and technical specifications. The export may contain around 3,000 products, but only the subset whose **original WooCommerce Images field is empty or an explicit no-image placeholder** is eligible for the main scraping queue. Do not scrape all products by default. The active source list excludes techlad.pk while it is down and includes MHK Tech Zone (`mhktechzone.com`) as a replacement source.
 
 A populated original `Images` field — including Techistics-hosted WordPress media URLs or multiple URLs — is a hard exclusion from both normal enrichment and audit-triggered re-scraping. Do not bypass this rule just because a product is missing specs or a description. The original export is authoritative for eligibility; locally downloaded competitor images do not change it.
 
@@ -23,6 +23,10 @@ Extract specs from JSON-LD, product attributes, HTML tables, definition lists, l
 Preserve useful existing values. Do not replace a populated description with a worse/shorter one without a clear quality reason.
 
 ## Matching and rejection policy
+
+Current primary retailer sources include czone.com.pk, pclab.pk, tech.com.pk, zahcomputers.pk, techmatched.pk, zestrogaming.com, and mhktechzone.com. Do not re-add techlad.pk unless the user confirms it is back online and it has been checked in a small test.
+
+MHK Tech Zone was verified through indexed live pages to use WooCommerce-style `/product/` and `/product-category/` URLs. The scraper uses its `/?s=...&post_type=product` search endpoint. Its selectors still require a small live scrape validation before large batches.
 
 Never accept a result simply because a search returned a URL. Validate the actual product-page title/name against the Techistics product name. Reject generic category/shop pages and mismatches in model number, capacity, RAM size, GPU/CPU identifiers, or other critical model tokens. Generic words such as “computer”, “gaming”, “memory”, “graphics”, and color names should not dominate matching.
 
