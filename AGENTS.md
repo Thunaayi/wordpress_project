@@ -1,77 +1,97 @@
-# AGENTS.md
+# AGENTS.md — Techistics scraper source of truth
 
-## Techistics scraper workflow
+This file is the durable project contract. Read it before changing scraper behavior. The user has explicitly asked to keep the repository consolidated: **do not create more branches**. Work on the repository's existing default branch, `main` (the GitHub repo currently calls it `main`, not `master`). Do not open new PRs or create alternate implementations unless the user explicitly asks. Preserve previous work and inspect existing code before replacing anything.
 
-The repository contains a WordPress/WooCommerce catalogue and a competitor enrichment scraper under scraper/.
+## Goal and scope
 
-### Product enrichment goal
+Enrich the Techistics WooCommerce export with competitor product images, descriptions, and technical specifications. The export may contain around 3,000 products, but only the subset whose **original WooCommerce Images field is empty or an explicit no-image placeholder** is eligible for the main scraping queue. Do not scrape all products by default.
 
-The inventory may contain thousands of products. The enrichment job MUST ONLY scrape products whose WooCommerce Images field is empty or contains an explicit no-image placeholder. Any populated image field—including a Techistics WordPress media URL or multiple image URLs—means the product already has an image and MUST be excluded from scraping, even if its specifications or description are missing. There is no all-products override. Products without images are the new-product enrichment queue; collect competitor product images, specifications, and description for those products. The missing-specification check must inspect WooCommerce attribute name/value pairs AND structured specifications embedded in product descriptions or short descriptions (tables, definition lists, labelled spec bullets, and technical feature lists).
+A populated original `Images` field — including Techistics-hosted WordPress media URLs or multiple URLs — is a hard exclusion from both normal enrichment and audit-triggered re-scraping. Do not bypass this rule just because a product is missing specs or a description. The original export is authoritative for eligibility; locally downloaded competitor images do not change it.
 
-The scraper must not silently drop products that cannot be matched.
+Never write scraped data back into the original catalogue automatically. Outputs are review artifacts for later import.
 
-### Status tracking
+## Required fields and quality rules
 
-Enrichment status reports should contain only products without existing images. Separately create a full inventory classification so the user can distinguish image-present from image-missing products without scraping the image-present group. Never add an image-present product to the enrichment queue.
+For each eligible image-missing product, attempt to collect:
+- A valid matching competitor product page and source URL.
+- Product images (up to the configured cap), deduplicated by normalized URL and exact file hash.
+- A product description and a separate short description when available.
+- Technical specifications. Specs are a required field, not optional metadata.
 
-Statuses:
-- MATCHED — sufficiently confident competitor match.
-- PARTIAL — product page found, but requested fields are missing or need review.
-- MULTIPLE_MATCHES — reserved for multiple plausible retailer matches requiring review.
-- NO_MATCH — no sufficiently confident competitor match.
-- ERROR — processing failed unexpectedly.
-- PENDING — selected for enrichment but not processed in the current run.
-- SKIPPED — intentionally not processed, normally because the product is already complete.
+Extract specs from JSON-LD, product attributes, HTML tables, definition lists, labelled rows, lists, accordion/tab content, and sections labelled Specifications, Technical Details, Product Details, or Features. Also recognize specs embedded in WooCommerce description and short-description fields when auditing the original export. A result with zero extracted specs must not be called fully successful: mark it `PARTIAL` and queue it for review/retry.
 
-The status CSV should support filtering by category, retailer, match score, image count, and specification count. Image presence is the hard eligibility gate: no product with an existing image may be selected.
+Preserve useful existing values. Do not replace a populated description with a worse/shorter one without a clear quality reason.
 
-Progress must persist across runs. A previously enriched product with status MATCHED or SKIPPED must not be reprocessed on the next run. PARTIAL, NO_MATCH, and ERROR products remain retryable. Batch limits and interruptions must not lose completed results.
+## Matching and rejection policy
 
-### Output files
+Never accept a result simply because a search returned a URL. Validate the actual product-page title/name against the Techistics product name. Reject generic category/shop pages and mismatches in model number, capacity, RAM size, GPU/CPU identifiers, or other critical model tokens. Generic words such as “computer”, “gaming”, “memory”, “graphics”, and color names should not dominate matching.
 
-- output/product_image_inventory.csv — classification of the full inventory into HAS_IMAGE and MISSING_IMAGE, including current image URL, specs presence, and description presence.
-- output/image_present.csv — image-present products; classification only, never scraped.
-- output/image_missing.csv — image-missing products eligible for enrichment.
-- output/product_image_inventory.json — machine-readable full inventory classification.
-- output/product_enrichment_status.csv — master tracking report for image-missing products only.
-- output/product_enrichment_status.json — machine-readable master report.
-- output/matched.csv, partial.csv, multiple_matches.csv, no_match.csv, error.csv, pending.csv, skipped.csv — review buckets.
-- output/enriched_products.csv — detailed enrichment data.
-- output/enriched_products.json — detailed JSON results.
-- output/enriched_products_woocommerce.csv — matched products formatted for later WooCommerce import.
-- data/images/ — downloaded product images. Image files should use descriptive, filesystem-safe product-name slugs (plus a stable product ID when available), not opaque names such as product_12313.jpg. Multiple images for one product should use a deterministic suffix such as -1, -2, etc.
+Do not silently swallow site failures or silently discard candidate products. The search audit must record:
+- Each retailer/search engine actually checked and the query used.
+- Search URL and timestamp.
+- Candidate title/name, URL, and score for plausible results.
+- Whether a candidate was accepted, rejected, or considered a close match, plus the reason.
+- Navigation/search errors.
+- The final product-page title validation decision.
 
-Do not overwrite the original Techistics catalogue as part of enrichment.
+Do not claim a site was checked if the scraper did not actually request it. Early stopping is acceptable only when the existing confidence policy allows it; the report should show exactly what was checked before stopping.
 
-### Specification extraction
+## Auditing and retry workflow
 
-Specifications are a required enrichment field. Do not assume specifications use one WooCommerce selector. Support HTML tables, definition lists (dt/dd), WooCommerce attribute rows, generic label/value rows, specification list items, accordion/tab content, specification sections following headings such as Specifications, Technical Details, Product Details, and Features, and JSON-LD when available.
+From `scraper/`:
 
-A matched product with zero extracted specifications should normally be classified as PARTIAL, not treated as a fully successful enrichment.
+- `npm run audit` — runs both local exact-image duplicate/missing-file audit and product-quality audit. Read-only; it does not contact retailer sites, delete images, or alter enrichment results.
+- `npm run audit:images` — hashes local image files and reports exact duplicate groups in `output/image_audit.csv`.
+- `npm run audit:products` — checks only products missing images in the original export. It audits source product-name similarity, specs, description, image references, missing local image files, duplicate references, and non-descriptive legacy image filenames. It writes `output/product_quality_audit.csv` and `output/rescrape_queue.csv`.
+- `npm run enrich:fields` — retries missing description/specification fields from saved matched source URLs; supports `--retry-description`, `--retry-specs`, and `--retry-all`.
+- `npm run rescrape:audit` — re-runs the normal matcher for products in `output/rescrape_queue.csv`. It still rechecks the original export and cannot select a product with a populated original Images field.
 
-### Matching
+Use a small batch for any network scraping. PowerShell example:
 
-Never accept a weak match merely because a search result exists. Validate the candidate product page title/name against the Techistics product name and reject obvious capacity, RAM, or model mismatches.
+```powershell
+$env:ENRICH_LIMIT="10"
+npm run enrich
+```
 
-Prefer model numbers, capacities, RAM sizes, GPU/CPU identifiers, and other product-specific tokens over generic words such as computer, graphics, memory, or gaming.
+After inspecting the quality report, retry only the queued eligible products:
 
-### Running
+```powershell
+$env:ENRICH_LIMIT="10"
+npm run rescrape:audit
+```
 
-From scraper/:
+If the queue is larger, repeat with appropriate batch sizes. The queue is generated by `npm run audit`; re-run audit after each retry batch to refresh it. Never run the entire queue without first checking the counts and results.
 
-    npm install
-    npm run enrich
+## Image handling and cleanup safety
 
-For a small test:
+- New image names should be descriptive, filesystem-safe product-name slugs, with a stable product ID where available and deterministic gallery suffixes.
+- Preserve image URL query parameters unless it is proven that they do not identify different gallery assets.
+- Deduplicate exact file bytes safely; do not assume different image hashes mean images are visually different.
+- `npm run cleanup:images` is preview-only and writes `output/image_cleanup_plan.csv` and `output/image_cleanup_plan.json`.
+- Never apply cleanup until the preview is reviewed. Applying requires both `--apply` and `--confirm=YES`; it backs up changed output files and moves duplicates to `data/images/.duplicate-quarantine/` rather than permanently deleting them.
+- Do not make live website changes. The scraper must not upload, edit, or delete products/images on Techistics.
 
-    $env:ENRICH_LIMIT="20"; npm run enrich
+## Outputs and reports
 
-For a later batch:
+- `output/product_image_inventory.csv`, `image_present.csv`, `image_missing.csv`, and `product_image_inventory.json`: full inventory classification. Image-present rows are classification-only.
+- `output/product_enrichment_status.csv` and `product_enrichment_status.json`: master status tracking for eligible image-missing products.
+- `output/matched.csv`, `partial.csv`, `multiple_matches.csv`, `no_match.csv`, `error.csv`, `pending.csv`, `skipped.csv`: status buckets.
+- `output/enriched_products.csv`, `enriched_products.json`, and `enriched_products_woocommerce.csv`: detailed and review/import-shaped outputs.
+- `output/search_audit.csv`: timestamped search trace showing sites/engines, queries, candidate names/URLs, scores, rejected close matches, errors, and product-page title validation.
+- `output/image_audit.csv`: local exact-duplicate report.
+- `output/product_quality_audit.csv`: name/field/image quality audit for eligible products.
+- `output/rescrape_queue.csv`: products needing another pass, still subject to the original missing-image eligibility gate.
+- `output/field_enrichment_status.csv`: independent description/spec retry status.
+- `output/image_cleanup_plan.csv/json`, `cleanup_backups/`, and `cleanup_manifest.json`: cleanup preview, backups, and quarantine record.
 
-    $env:ENRICH_START="20"; $env:ENRICH_LIMIT="20"; npm run enrich
+Do not commit generated reports, product exports, downloaded product images, or other user data unless explicitly requested.
 
-Do not start a full image-missing queue run until a small test confirms the target count equals the number of rows with no image URL, and confirms that no product with a Techistics WordPress image URL is scraped.
+## Reliability and test requirements
 
-### Important
-
-The dedicated enrichment runner is the preferred workflow for the new Techistics inventory enrichment task. Do not reintroduce the older fragile generic scraper logic merely to solve enrichment.
+- Preserve checkpoints so interruptions do not lose completed products.
+- Products with `PARTIAL`, `NO_MATCH`, or `ERROR` must remain retryable. `MATCHED` may be retried only via the explicit audit queue when the audit found a quality issue.
+- Do not mark a product as complete when specs, description, or images are missing.
+- Run syntax checks for changed JavaScript and parse `package.json` before reporting success. Do not claim live scraping or local output audits were run unless they were actually executed against the user's local files.
+- Before changing a file, fetch/read its current contents and preserve unrelated work. Never overwrite a whole script with a simplified replacement to fix one issue.
+- Keep the primary implementation in `scraper/src/enrich_new_products.js`; avoid reintroducing the older generic `src/index.js` workflow as the solution for this dedicated enrichment task.
+- Keep documentation in sync with actual scripts and command names. If a command's behavior changes, update this file in the same work.
