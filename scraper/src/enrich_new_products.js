@@ -445,7 +445,8 @@ function normalizeImageUrl(url) {
   try {
     const u = new URL(url);
     u.hash = "";
-    u.search = "";
+    // Preserve query parameters because some CDNs use them to identify distinct gallery images.
+    // SHA-256 deduplication below removes identical content after download.
     u.pathname = u.pathname.replace(/-\d+x\d+(?=\.[a-z0-9]+$)/i, "");
     return u.href;
   } catch {
