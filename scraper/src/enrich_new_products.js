@@ -197,7 +197,7 @@ async function goto(page, url, attempts = 3) {
   throw last || new Error("navigation failed");
 }
 
-async function searchSite(page, source, productName, productId = "") {
+async function searchSite(page, source, productName, productId = "", targetName = productName) {
   let best = null;
 
   for (const query of queryVariants(productName)) {
@@ -225,25 +225,25 @@ async function searchSite(page, source, productName, productId = "") {
         if (!unique.has(candidate.url)) unique.set(candidate.url, candidate);
       }
       const ranked = [...unique.values()];
-      appendSearchAudit({ productId, targetName: productName, retailer: source.name, query, searchUrl, decision: "SITE_CHECKED", reason: "Product links inspected: " + ranked.length });
+      appendSearchAudit({ productId, targetName, retailer: source.name, query, searchUrl, decision: "SITE_CHECKED", reason: "Product links inspected: " + ranked.length });
       for (const candidate of ranked.slice(0, 25)) {
         const decision = candidate.score >= MIN_MATCH ? "CANDIDATE" : candidate.score >= 0.35 ? "CLOSE_MATCH_REJECTED" : "LOW_SCORE_REJECTED";
         const reason = decision === "CANDIDATE" ? "Search-title score meets minimum; product page title will be validated" :
           decision === "CLOSE_MATCH_REJECTED" ? "Below minimum match threshold" : "Insufficient product-name overlap";
-        appendSearchAudit({ productId, targetName: productName, retailer: source.name, query, searchUrl, candidateName: candidate.matchedText, candidateUrl: candidate.url, score: candidate.score, decision, reason });
+        appendSearchAudit({ productId, targetName, retailer: source.name, query, searchUrl, candidateName: candidate.matchedText, candidateUrl: candidate.url, score: candidate.score, decision, reason });
       }
       if (ranked[0] && (!best || ranked[0].score > best.score)) best = ranked[0];
       if (best && best.score >= 0.92) return best;
     } catch (e) {
       console.log("    CHECK FAILED " + source.name + " | " + e.message);
-      appendSearchAudit({ productId, targetName: productName, retailer: source.name, query, searchUrl, decision: "SITE_ERROR", reason: e.message });
+      appendSearchAudit({ productId, targetName, retailer: source.name, query, searchUrl, decision: "SITE_ERROR", reason: e.message });
     }
   }
 
   return best;
 }
 
-async function webSearch(page, productName, productId = "") {
+async function webSearch(page, productName, productId = "", targetName = productName) {
   const q = productName.replace(/"/g, "");
   const engines = [
     { name: "Google", url: "https://www.google.com/search?q=" + encodeURIComponent(q) },
@@ -270,16 +270,16 @@ async function webSearch(page, productName, productId = "") {
       const unique = new Map();
       for (const candidate of candidates) if (!unique.has(candidate.url)) unique.set(candidate.url, candidate);
       const ranked = [...unique.values()];
-      appendSearchAudit({ productId, targetName: productName, retailer: engine.name, query: q, searchUrl: engine.url, decision: "SEARCH_ENGINE_CHECKED", reason: "Supported-retailer links inspected: " + ranked.length });
+      appendSearchAudit({ productId, targetName, retailer: engine.name, query: q, searchUrl: engine.url, decision: "SEARCH_ENGINE_CHECKED", reason: "Supported-retailer links inspected: " + ranked.length });
       for (const candidate of ranked.slice(0, 25)) {
         const decision = candidate.score >= MIN_MATCH ? "CANDIDATE" : candidate.score >= 0.35 ? "CLOSE_MATCH_REJECTED" : "LOW_SCORE_REJECTED";
-        appendSearchAudit({ productId, targetName: productName, retailer: candidate.source + " via " + engine.name, query: q, searchUrl: engine.url, candidateName: candidate.matchedText, candidateUrl: candidate.url, score: candidate.score, decision, reason: decision === "CANDIDATE" ? "Meets search threshold; page title must still validate" : "Below minimum match threshold" });
+        appendSearchAudit({ productId, targetName, retailer: candidate.source + " via " + engine.name, query: q, searchUrl: engine.url, candidateName: candidate.matchedText, candidateUrl: candidate.url, score: candidate.score, decision, reason: decision === "CANDIDATE" ? "Meets search threshold; page title must still validate" : "Below minimum match threshold" });
       }
       if (ranked[0] && (!best || ranked[0].score > best.score)) best = ranked[0];
       if (best && best.score >= 0.85) return best;
     } catch (e) {
       console.log("    CHECK FAILED " + engine.name + " | " + e.message);
-      appendSearchAudit({ productId, targetName: productName, retailer: engine.name, query: q, searchUrl: engine.url, decision: "SEARCH_ENGINE_ERROR", reason: e.message });
+      appendSearchAudit({ productId, targetName, retailer: engine.name, query: q, searchUrl: engine.url, decision: "SEARCH_ENGINE_ERROR", reason: e.message });
     }
   }
   return best;
@@ -836,7 +836,7 @@ async function main() {
     // SKU/model searches are much safer than broad product-name searches.
     for (const term of searchTerms.slice(0, 1)) {
       for (const source of SOURCES) {
-        const candidate = await searchSite(page, source, term, target.id || target.sku);
+        const candidate = await searchSite(page, source, term, target.id || target.sku, target.name);
         if (candidate && (!best || candidate.score > best.score)) best = candidate;
         if (best && best.score >= 0.96) break;
       }
@@ -847,7 +847,7 @@ async function main() {
     if (!best || best.score < 0.92) {
       for (const term of searchTerms.slice(target.sku && target.sku.length >= 4 ? 1 : 0)) {
         for (const source of SOURCES) {
-          const candidate = await searchSite(page, source, term, target.id || target.sku);
+          const candidate = await searchSite(page, source, term, target.id || target.sku, target.name);
           if (candidate && (!best || candidate.score > best.score)) best = candidate;
           if (best && best.score >= 0.96) break;
         }
@@ -858,7 +858,7 @@ async function main() {
     // External search is a last resort, not the first matcher.
     if (!best || best.score < MIN_MATCH) {
       for (const term of searchTerms) {
-        const webCandidate = await webSearch(page, term, target.id || target.sku);
+        const webCandidate = await webSearch(page, term, target.id || target.sku, target.name);
         if (webCandidate && (!best || webCandidate.score > best.score)) best = webCandidate;
         if (best && best.score >= 0.92) break;
       }
@@ -888,7 +888,7 @@ async function main() {
         let fallback = null;
         const retryTerms = searchTermsForTarget(target);
         for (const term of retryTerms) {
-          const candidate = await webSearch(page, term, target.id || target.sku);
+          const candidate = await webSearch(page, term, target.id || target.sku, target.name);
           if (!candidate || candidate.url === best.url || candidate.score < MIN_MATCH) continue;
           try {
             const retryData = await extractProduct(page, candidate.url);
