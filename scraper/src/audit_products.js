@@ -65,14 +65,23 @@ function nameScore(target, source) {
 function descriptionHasStructuredSpecs(value) {
   const raw = String(value ?? "");
   if (!raw.trim()) return false;
+  const tableRows = [...raw.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)]
+    .filter(([, row]) => [...row.matchAll(/<(?:th|td)\b[^>]*>([\s\S]*?)<\/(?:th|td)>/gi)].length >= 2);
+  if (tableRows.length >= 2) return true;
+  const definitionPairs = [...raw.matchAll(/<dt\b[^>]*>([\s\S]*?)<\/dt>[\s\S]{0,500}?<dd\b[^>]*>([\s\S]*?)<\/dd>/gi)]
+    .filter(([, label, content]) => clean(label.replace(/<[^>]+>/g, "")) && clean(content.replace(/<[^>]+>/g, "")));
+  if (definitionPairs.length >= 2) return true;
+
   const plain = raw
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
-    .replace(/<\/(?:tr|li|p|div|dd|dt|h[1-6])\s*>/gi, "\n")
+    .replace(/<br\s*\/?\s*>/gi, "\n")
+    .replace(/<\/(?:tr|td|th|li|p|div|dd|dt|h[1-6])\s*>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;|&#160;/gi, " ")
     .replace(/&amp;/gi, "&")
-    .replace(/\s+/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{2,}/g, "\n")
     .trim();
   const labelled = plain.split(/[\n|•;]/).map(clean).filter(line =>
     /^[^:：]{2,55}\s*[:：]\s*\S{1,}/.test(line)
@@ -81,6 +90,7 @@ function descriptionHasStructuredSpecs(value) {
   const hasSpecHeading = /\b(specifications?|technical details?|product details|features)\b/i.test(plain);
   return labelled.length >= 2 || technical >= 3 || (hasSpecHeading && technical >= 1);
 }
+
 function imageReferenceIssues(images, productName, productId) {
   const issues = [];
   const list = Array.isArray(images) ? images : (images ? String(images).split(/[,\n]/).map(clean).filter(Boolean) : []);
