@@ -34,7 +34,7 @@ const SOURCES = [
   { name: "czone.com.pk", domain: "czone.com.pk", search: q => "https://www.czone.com.pk/search.aspx?search=" + encodeURIComponent(q) },
   { name: "pclab.pk", domain: "pclab.pk", search: q => "https://pclab.pk/?s=" + encodeURIComponent(q) + "&post_type=product" },
   { name: "tech.com.pk", domain: "tech.com.pk", search: q => "https://tech.com.pk/?s=" + encodeURIComponent(q) + "&post_type=product" },
-  { name: "techlad.pk", domain: "techlad.pk", search: q => "https://techlad.pk/?s=" + encodeURIComponent(q) + "&post_type=product" },
+  { name: "mhktechzone.com", domain: "mhktechzone.com", search: q => "https://www.mhktechzone.com/search?q=" + encodeURIComponent(q) },
   { name: "zahcomputers.pk", domain: "zahcomputers.pk", search: q => "https://zahcomputers.pk/?s=" + encodeURIComponent(q) + "&post_type=product" },
   { name: "techmatched.pk", domain: "techmatched.pk", search: q => "https://techmatched.pk/?s=" + encodeURIComponent(q) + "&post_type=product" },
   { name: "zestrogaming.com", domain: "zestrogaming.com", search: q => "https://zestrogaming.com/?s=" + encodeURIComponent(q) + "&post_type=product" },
