@@ -4,7 +4,7 @@
   "description": "Techistics product enrichment scraper",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "npm run check",
     "enrich": "node src/enrich_new_products.js",
     "enrich:fields": "node src/enrich_missing_fields.js",
     "audit": "npm run audit:images && npm run audit:products",
@@ -12,7 +12,8 @@
     "cleanup:images": "node src/cleanup_duplicate_images.js",
     "audit:images": "node src/audit_images.js",
     "audit:products": "node src/audit_products.js",
-    "rescrape:audit": "node src/enrich_new_products.js --retry-audit"
+    "rescrape:audit": "node src/enrich_new_products.js --retry-audit",
+    "check": "node --check src/index.js && node --check src/config/sites.js && node --check src/scrapers/BaseScraper.js && node --check src/utils/ProductExtractor.js && node --check src/utils/helpers.js && node --check src/enrich_new_products.js && node --check src/enrich_missing_fields.js && node --check src/audit_images.js && node --check src/audit_products.js && node --check src/cleanup_duplicate_images.js"
   },
   "keywords": [],
   "type": "commonjs",
