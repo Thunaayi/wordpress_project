@@ -25,6 +25,9 @@ const START = Number(cliValue("start") || process.env.ENRICH_START || 0);
 const ALLOW_UNLIMITED = process.env.ENRICH_ALLOW_UNLIMITED === "1";
 const STATUS_FILE = path.join(OUTPUT_DIR, "product_enrichment_status.csv");
 const MASTER_JSON = path.join(OUTPUT_DIR, "product_enrichment_status.json");
+const SEARCH_AUDIT_FILE = path.join(OUTPUT_DIR, "search_audit.csv");
+const AUDIT_QUEUE_FILE = path.join(OUTPUT_DIR, "rescrape_queue.csv");
+const RETRY_AUDIT = argv.includes("--retry-audit");
 const MIN_MATCH = Number(process.env.ENRICH_MIN_MATCH || 0.72);
 
 const SOURCES = [
@@ -54,6 +57,14 @@ function clean(v) {
 function csvEscape(v) {
   const s = String(v ?? "");
   return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function appendSearchAudit(row) {
+  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+  const headers = ["Timestamp", "Product ID", "Target product", "Retailer", "Query", "Search URL", "Candidate name", "Candidate URL", "Score", "Decision", "Reason"];
+  const exists = fs.existsSync(SEARCH_AUDIT_FILE);
+  const values = [row.timestamp || new Date().toISOString(), row.productId || "", row.targetName || "", row.retailer || "", row.query || "", row.searchUrl || "", row.candidateName || "", row.candidateUrl || "", row.score == null ? "" : Number(row.score).toFixed(4), row.decision || "", row.reason || ""];
+  fs.appendFileSync(SEARCH_AUDIT_FILE, (!exists ? headers.map(csvEscape).join(",") + "\n" : "") + values.map(csvEscape).join(",") + "\n", "utf8");
 }
 
 function normalize(s) {
@@ -186,67 +197,91 @@ async function goto(page, url, attempts = 3) {
   throw last || new Error("navigation failed");
 }
 
-async function searchSite(page, source, productName) {
+async function searchSite(page, source, productName, productId = "") {
   let best = null;
 
   for (const query of queryVariants(productName)) {
+    const searchUrl = source.search(query);
     try {
-      await goto(page, source.search(query), 2);
+      console.log("    CHECK " + source.name + " | query: " + query);
+      await goto(page, searchUrl, 2);
 
-      const links = await page.$$eval("a[href]", anchors => anchors.map(a => ({
+      const links = await page.$eval("a[href]", anchors => anchors.map(a => ({
         href: a.href,
         text: (a.innerText || a.textContent || a.getAttribute("title") || a.querySelector("img")?.alt || "").trim(),
         title: (a.getAttribute("title") || "").trim()
       })).filter(x => x.href));
 
+      const candidates = [];
       for (const item of links) {
         const candidateText = clean(item.text || item.title);
         if (!candidateText || !isProductUrl(item.href, source.domain)) continue;
-
         const score = scoreMatch(productName, candidateText);
-        if (!best || score > best.score) {
-          best = { url: item.href, score, matchedText: candidateText, source: source.name };
-        }
+        candidates.push({ url: item.href, score, matchedText: candidateText, source: source.name });
       }
-
+      candidates.sort((a, b) => b.score - a.score);
+      const unique = new Map();
+      for (const candidate of candidates) {
+        if (!unique.has(candidate.url)) unique.set(candidate.url, candidate);
+      }
+      const ranked = [...unique.values()];
+      appendSearchAudit({ productId, targetName: productName, retailer: source.name, query, searchUrl, decision: "SITE_CHECKED", reason: "Product links inspected: " + ranked.length });
+      for (const candidate of ranked.slice(0, 25)) {
+        const decision = candidate.score >= MIN_MATCH ? "CANDIDATE" : candidate.score >= 0.35 ? "CLOSE_MATCH_REJECTED" : "LOW_SCORE_REJECTED";
+        const reason = decision === "CANDIDATE" ? "Search-title score meets minimum; product page title will be validated" :
+          decision === "CLOSE_MATCH_REJECTED" ? "Below minimum match threshold" : "Insufficient product-name overlap";
+        appendSearchAudit({ productId, targetName: productName, retailer: source.name, query, searchUrl, candidateName: candidate.matchedText, candidateUrl: candidate.url, score: candidate.score, decision, reason });
+      }
+      if (ranked[0] && (!best || ranked[0].score > best.score)) best = ranked[0];
       if (best && best.score >= 0.92) return best;
-    } catch (e) {}
+    } catch (e) {
+      console.log("    CHECK FAILED " + source.name + " | " + e.message);
+      appendSearchAudit({ productId, targetName: productName, retailer: source.name, query, searchUrl, decision: "SITE_ERROR", reason: e.message });
+    }
   }
 
   return best;
 }
 
-async function webSearch(page, productName) {
+async function webSearch(page, productName, productId = "") {
   const q = productName.replace(/"/g, "");
   const engines = [
-    "https://www.google.com/search?q=" + encodeURIComponent(q),
-    "https://www.bing.com/search?q=" + encodeURIComponent(q)
+    { name: "Google", url: "https://www.google.com/search?q=" + encodeURIComponent(q) },
+    { name: "Bing", url: "https://www.bing.com/search?q=" + encodeURIComponent(q) }
   ];
-
   let best = null;
 
-  for (const searchUrl of engines) {
+  for (const engine of engines) {
     try {
-      await goto(page, searchUrl, 2);
-      const links = await page.$$eval("a[href]", anchors => anchors.map(a => ({
+      console.log("    CHECK " + engine.name + " | query: " + q);
+      await goto(page, engine.url, 2);
+      const links = await page.$eval("a[href]", anchors => anchors.map(a => ({
         href: a.href,
         text: (a.innerText || a.textContent || a.getAttribute("aria-label") || "").trim()
       })));
-
+      const candidates = [];
       for (const item of links) {
         if (!item.href || !item.text) continue;
         const source = SOURCES.find(s => isProductUrl(item.href, s.domain));
         if (!source) continue;
-        const score = scoreMatch(productName, item.text);
-        if (!best || score > best.score) {
-          best = { url: item.href, score, matchedText: clean(item.text), source: source.name };
-        }
+        candidates.push({ url: item.href, score: scoreMatch(productName, item.text), matchedText: clean(item.text), source: source.name });
       }
-
+      candidates.sort((a, b) => b.score - a.score);
+      const unique = new Map();
+      for (const candidate of candidates) if (!unique.has(candidate.url)) unique.set(candidate.url, candidate);
+      const ranked = [...unique.values()];
+      appendSearchAudit({ productId, targetName: productName, retailer: engine.name, query: q, searchUrl: engine.url, decision: "SEARCH_ENGINE_CHECKED", reason: "Supported-retailer links inspected: " + ranked.length });
+      for (const candidate of ranked.slice(0, 25)) {
+        const decision = candidate.score >= MIN_MATCH ? "CANDIDATE" : candidate.score >= 0.35 ? "CLOSE_MATCH_REJECTED" : "LOW_SCORE_REJECTED";
+        appendSearchAudit({ productId, targetName: productName, retailer: candidate.source + " via " + engine.name, query: q, searchUrl: engine.url, candidateName: candidate.matchedText, candidateUrl: candidate.url, score: candidate.score, decision, reason: decision === "CANDIDATE" ? "Meets search threshold; page title must still validate" : "Below minimum match threshold" });
+      }
+      if (ranked[0] && (!best || ranked[0].score > best.score)) best = ranked[0];
       if (best && best.score >= 0.85) return best;
-    } catch (e) {}
+    } catch (e) {
+      console.log("    CHECK FAILED " + engine.name + " | " + e.message);
+      appendSearchAudit({ productId, targetName: productName, retailer: engine.name, query: q, searchUrl: engine.url, decision: "SEARCH_ENGINE_ERROR", reason: e.message });
+    }
   }
-
   return best;
 }
 
@@ -731,11 +766,20 @@ async function main() {
   const inventory = loadInventory();
   const previous = loadPreviousResults();
   const candidateTargets = inventory.filter(p => !p.hasExistingImage);
-  const targets = candidateTargets.filter(p => {
-    const prior = previous.get(productKey(p));
-    const priorStatus = String(prior?.status || "").toUpperCase();
-    return !prior || !["MATCHED", "SKIPPED"].includes(priorStatus);
-  });
+  let targets;
+  if (RETRY_AUDIT) {
+    if (!fs.existsSync(AUDIT_QUEUE_FILE)) throw new Error("Audit retry queue not found: " + AUDIT_QUEUE_FILE + ". Run npm run audit first.");
+    const queueRows = parse(fs.readFileSync(AUDIT_QUEUE_FILE, "utf8"), { columns: true, skip_empty_lines: true, bom: true });
+    const queueKeys = new Set(queueRows.map(row => productKey({ id: row.ID, sku: row.SKU, name: row.Name })).filter(Boolean));
+    targets = candidateTargets.filter(p => queueKeys.has(productKey(p)));
+    console.log("Audit retry mode: selected " + targets.length + " queued products (still gated by original image-missing inventory).");
+  } else {
+    targets = candidateTargets.filter(p => {
+      const prior = previous.get(productKey(p));
+      const priorStatus = String(prior?.status || "").toUpperCase();
+      return !prior || !["MATCHED", "SKIPPED"].includes(priorStatus);
+    });
+  }
   console.log("Inventory: " + inventory.length);
   console.log("Products with existing images (excluded): " + inventory.filter(p => p.hasExistingImage).length);
   console.log("Products missing images (enrichment candidates): " + candidateTargets.length);
@@ -792,7 +836,7 @@ async function main() {
     // SKU/model searches are much safer than broad product-name searches.
     for (const term of searchTerms.slice(0, 1)) {
       for (const source of SOURCES) {
-        const candidate = await searchSite(page, source, term);
+        const candidate = await searchSite(page, source, term, target.id || target.sku);
         if (candidate && (!best || candidate.score > best.score)) best = candidate;
         if (best && best.score >= 0.96) break;
       }
@@ -803,7 +847,7 @@ async function main() {
     if (!best || best.score < 0.92) {
       for (const term of searchTerms.slice(target.sku && target.sku.length >= 4 ? 1 : 0)) {
         for (const source of SOURCES) {
-          const candidate = await searchSite(page, source, term);
+          const candidate = await searchSite(page, source, term, target.id || target.sku);
           if (candidate && (!best || candidate.score > best.score)) best = candidate;
           if (best && best.score >= 0.96) break;
         }
@@ -814,7 +858,7 @@ async function main() {
     // External search is a last resort, not the first matcher.
     if (!best || best.score < MIN_MATCH) {
       for (const term of searchTerms) {
-        const webCandidate = await webSearch(page, term);
+        const webCandidate = await webSearch(page, term, target.id || target.sku);
         if (webCandidate && (!best || webCandidate.score > best.score)) best = webCandidate;
         if (best && best.score >= 0.92) break;
       }
@@ -837,13 +881,14 @@ async function main() {
       const genericPage = looksLikeGenericProductName(data.name);
       let finalScore = pageScore;
 
+      appendSearchAudit({ productId: target.id || target.sku, targetName: target.name, retailer: best.source || "", query: searchTerms.join(" | "), searchUrl: best.url, candidateName: data.name, candidateUrl: best.url, score: finalScore, decision: (genericPage || finalScore < MIN_MATCH) ? "PRODUCT_PAGE_REJECTED" : "PRODUCT_PAGE_ACCEPTED", reason: genericPage ? "Generic/non-product page title" : finalScore < MIN_MATCH ? "Product page title below minimum match threshold" : "Product page title validated" });
       if (genericPage || finalScore < MIN_MATCH) {
         console.log("    REJECTED CANDIDATE | page title: " + clean(data.name) + " | score " + finalScore.toFixed(2));
 
         let fallback = null;
         const retryTerms = searchTermsForTarget(target);
         for (const term of retryTerms) {
-          const candidate = await webSearch(page, term);
+          const candidate = await webSearch(page, term, target.id || target.sku);
           if (!candidate || candidate.url === best.url || candidate.score < MIN_MATCH) continue;
           try {
             const retryData = await extractProduct(page, candidate.url);
@@ -931,6 +976,7 @@ async function main() {
   console.log("Status: scraper/output/product_enrichment_status.csv");
   console.log("Output: scraper/output/enriched_products_woocommerce.csv");
   console.log("Details: scraper/output/enriched_products.json");
+  console.log("Search audit (sites, queries, candidates, rejections): scraper/output/search_audit.csv");
 }
 
 main().catch(e => {
