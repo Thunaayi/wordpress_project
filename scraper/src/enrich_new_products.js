@@ -206,7 +206,13 @@ async function searchSite(page, source, productName, productId = "", targetName 
       console.log("    CHECK " + source.name + " | query: " + query);
       await goto(page, searchUrl, 2);
 
-      const links = await page.$eval("a[href]", anchors => anchors.map(a => ({
+      // $$eval (not $eval): $eval hands the callback a single matched
+      // Element, which has no .map — that's the "anchors.map is not a
+      // function" error. $$eval hands back the full NodeList as an array.
+      // $eval also throws outright when zero elements match, which is what
+      // produced the "failed to find element matching selector" errors on
+      // pages with no results at all.
+      const links = await page.$$eval("a[href]", anchors => anchors.map(a => ({
         href: a.href,
         text: (a.innerText || a.textContent || a.getAttribute("title") || a.querySelector("img")?.alt || "").trim(),
         title: (a.getAttribute("title") || "").trim()
@@ -255,7 +261,8 @@ async function webSearch(page, productName, productId = "", targetName = product
     try {
       console.log("    CHECK " + engine.name + " | query: " + q);
       await goto(page, engine.url, 2);
-      const links = await page.$eval("a[href]", anchors => anchors.map(a => ({
+      // Same $eval -> $$eval fix as searchSite() above.
+      const links = await page.$$eval("a[href]", anchors => anchors.map(a => ({
         href: a.href,
         text: (a.innerText || a.textContent || a.getAttribute("aria-label") || "").trim()
       })));
@@ -340,9 +347,20 @@ async function extractProductOnce(page, url) {
     ]) || meta("og:title") || p.name || document.title || "";
 
     const specs = {};
+    // addSpec is called two different ways: with real DOM elements (the
+    // dt/dd definition-list path below) and with plain strings that are
+    // already text (every table/attribute-row/regex/"Feature N" path, which
+    // all build their label/value via .map(text) or a regex capture or a
+    // literal string before calling addSpec). text() only knows how to read
+    // .textContent off a DOM node — called on a plain string it returns ""
+    // (strings have no .textContent), which silently nulled out every spec
+    // from every path except the dt/dd one. asText handles both.
+    const asText = v => (v && typeof v === "object" && "textContent" in v)
+      ? text(v)
+      : String(v || "").replace(/\s+/g, " ").trim();
     const addSpec = (label, value) => {
-      label = text(label).replace(/[:：]+$/, "");
-      value = text(value);
+      label = asText(label).replace(/[:：]+$/, "");
+      value = asText(value);
       if (!label || !value || label.length > 100 || value.length > 1000) return;
       if (/^(add to cart|buy now|reviews?|sku|price)$/i.test(label)) return;
       specs[label] = value;
@@ -402,6 +420,14 @@ async function extractProductOnce(page, url) {
       const width = Number(img.naturalWidth || img.width || 0);
       const height = Number(img.naturalHeight || img.height || 0);
       if (/(logo|favicon|icon|sprite|placeholder|no[-_ ]?image|loader|spinner|avatar|payment|trustpilot|whatsapp|facebook|instagram|twitter|youtube|badge|seal|captcha)/i.test(altText)) return;
+      // This only catches a small icon when the browser has actually decoded
+      // it (naturalWidth/Height > 0). Everything pulled from data-src/
+      // data-lazy-src below is, by definition, not rendered yet, so it
+      // reports 0x0 here and skips this check entirely — that's the actual
+      // bug behind site icons leaking into the gallery. saveImages() below
+      // re-checks real pixel dimensions on the downloaded file, which works
+      // regardless of load state; this DOM-time check is just a cheap first
+      // pass for images that happen to already be loaded.
       if (width > 0 && height > 0 && (width < 120 || height < 120)) return;
 
       [
@@ -421,7 +447,7 @@ async function extractProductOnce(page, url) {
     });
 
     const images = [...new Set(imageCandidates)].filter(u =>
-      !/(logo|icon|avatar|payment|sprite|placeholder|loader|spinner|favicon|trustpilot)/i.test(u)
+      !/(logo|icon|avatar|payment|sprite|placeholder|loader|spinner|favicon|trustpilot|whatsapp|facebook|instagram|twitter|youtube|badge|seal|captcha)/i.test(u)
     );
 
     if (!Object.keys(specs).length) {
@@ -476,17 +502,67 @@ async function extractProduct(page, url) {
   throw lastError || new Error("product extraction failed");
 }
 
+// Query params that only ever request a resized/recompressed rendition of
+// the SAME source image (WordPress's Photon/Jetpack CDN — i0.wp.com and
+// similar — uses exactly these: ?fit=500%2C500, ?w=500, ?resize=300%2C300).
+// Stripping them, not just the WordPress "-300x300" filename suffix below,
+// is what collapses "the same product photo at five different sizes" down
+// to one URL instead of five gallery entries. Left off: params that could
+// plausibly distinguish genuinely different images on some other CDN (an
+// image index/id, a cache-busting token, etc.) — only the well-known
+// resize/quality/crop ones are removed.
+const RESIZE_ONLY_QUERY_PARAMS = new Set(["w", "h", "width", "height", "resize", "fit", "quality", "q", "crop", "zoom"]);
+
 function normalizeImageUrl(url) {
   try {
     const u = new URL(url);
     u.hash = "";
-    // Preserve query parameters because some CDNs use them to identify distinct gallery images.
-    // SHA-256 deduplication below removes identical content after download.
+    for (const key of [...u.searchParams.keys()]) {
+      if (RESIZE_ONLY_QUERY_PARAMS.has(key.toLowerCase())) u.searchParams.delete(key);
+    }
+    // WordPress's own thumbnail naming convention ("image-300x300.jpg" next
+    // to "image.jpg") — same idea as the query-param strip above, just in
+    // the path instead of the query string.
     u.pathname = u.pathname.replace(/-\d+x\d+(?=\.[a-z0-9]+$)/i, "");
     return u.href;
   } catch {
     return null;
   }
+}
+
+// DOM-time naturalWidth/naturalHeight (checked in extractProductOnce above)
+// is 0 for any image that hasn't rendered yet, which is exactly the common
+// case for the data-src/data-lazy-src attributes this scraper reads from —
+// so that filter silently does nothing for lazy images, the ones most
+// likely to be small site chrome (icons, badges, wishlist/zoom buttons)
+// rather than product photos. This reads real dimensions from the
+// downloaded file instead, which works regardless of whether the source
+// page ever actually rendered the image.
+function getImageDimensions(buffer) {
+  try {
+    // PNG: 8-byte signature, then the IHDR chunk holds width/height as two
+    // big-endian uint32s starting at byte 16.
+    if (buffer.length >= 24 && buffer.readUInt32BE(0) === 0x89504e47) {
+      return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+    }
+    // JPEG: walk markers until an SOFx segment (0xC0-0xC3, 0xC5-0xC7,
+    // 0xC9-0xCB, 0xCD-0xCF — the "Cx" markers that aren't actually
+    // start-of-frame, like DHT/0xC4, get excluded), which stores height
+    // then width as big-endian uint16s 3 bytes into the segment.
+    if (buffer.length >= 4 && buffer[0] === 0xff && buffer[1] === 0xd8) {
+      let offset = 2;
+      while (offset + 9 < buffer.length) {
+        if (buffer[offset] !== 0xff) { offset++; continue; }
+        const marker = buffer[offset + 1];
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          return { height: buffer.readUInt16BE(offset + 5), width: buffer.readUInt16BE(offset + 7) };
+        }
+        const segmentLength = buffer.readUInt16BE(offset + 2);
+        offset += 2 + segmentLength;
+      }
+    }
+  } catch {}
+  return null; // webp/avif/gif or unparseable — let it through, don't guess
 }
 
 function extension(url) {
@@ -553,6 +629,12 @@ async function saveImages(urls, sourceUrl, productName, productId) {
     try {
       const buffer = await fetchBinary(url, sourceUrl);
       if (buffer.length < 1000) continue;
+
+      const dims = getImageDimensions(buffer);
+      if (dims && (dims.width < 150 || dims.height < 150)) {
+        console.log("      too small (" + dims.width + "x" + dims.height + "), likely site chrome not a product photo, skipped: " + url);
+        continue;
+      }
 
       // Different URLs can return identical file bytes. Skip duplicates for
       // this product so the saved image list contains unique downloads.
