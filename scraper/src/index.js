@@ -4,7 +4,6 @@ const https = require("https");
 const http = require("http");
 const { loadMasterProducts, loadDBProducts, calculateSimilarity, calculateNewPrice } = require("./utils/helpers");
 const TechpScraper = require("./scrapers/TechpScraper");
-const TechladScraper = require("./scrapers/TechladScraper");
 const ZahcomputersScraper = require("./scrapers/ZahcomputersScraper");
 const PclabScraper = require("./scrapers/PclabScraper");
 const CzoneScraper = require("./scrapers/CzoneScraper");
@@ -33,7 +32,6 @@ class ScraperOrchestrator {
 
     const scraperMap = {
       "tech.com.pk": new TechpScraper(),
-      "techlad.pk": new TechladScraper(),
       "zahcomputers.pk": new ZahcomputersScraper(),
       "pclab.pk": new PclabScraper(),
       "czone.com.pk": new CzoneScraper(),
