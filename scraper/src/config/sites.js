@@ -34,38 +34,38 @@ const SITES = {
     },
   },
 
-  techlad: {
-    name: "techlad.pk",
-    baseUrl: "https://techlad.pk",
-    searchUrl: "https://techlad.pk/?s={query}&post_type=product",
-    productUrlPattern: /\/product\/[\w-]+/,
+  mhktechzone: {
+    name: "mhktechzone.com",
+    baseUrl: "https://www.mhktechzone.com",
+    searchUrl: "https://www.mhktechzone.com/search?q={query}",
+    productUrlPattern: /\/products\/[^/?]+/i,
     selectors: {
-      searchResults: ".product-item, .product-grid-item, .product-card",
-      productLink: "a[href*=\".aspx\"]",
-      name: "h1.product-title, h1.product-name, .product-title",
-      price: ".price, .product-price, .special-price, .price-box .price",
-      originalPrice: ".old-price, .price-old, .was-price",
-      description: ".product-description, .description, .product-details .description, .tab-content.description",
-      shortDescription: ".short-description, .product-short-description",
-      specsTable: ".specifications-table, .product-specifications table, .product-attributes table, .data-table",
+      searchResults: ".product-card, .product-item, .grid__item, .product",
+      productLink: "a[href*=\"/products/\"]",
+      name: "h1, .product__title, .product-title",
+      price: ".price, .price-item, .product-price",
+      originalPrice: ".price--compare, .compare-at-price, .old-price",
+      description: ".product__description, .product-description, .rte",
+      shortDescription: ".product__description, .product-description",
+      specsTable: ".product__description table, .product-description table, table",
       specsRows: "tr",
       specLabel: "th, td:first-child",
       specValue: "td:last-child, td:nth-child(2)",
-      specsList: ".specifications-list, .product-specs dl, .attributes-list",
-      specItem: "dt, .spec-label",
-      specValueDD: "dd, .spec-value",
-      mainImage: ".product-image img, .product-gallery img, .main-image img",
-      galleryImages: ".product-gallery img, .product-images img, .gallery img",
-      specsTab: "#specification, #specifications, .tab-specification",
-      breadcrumbs: ".breadcrumb, .breadcrumbs, .product-breadcrumb",
-      availability: ".stock, .availability, .in-stock, .out-of-stock",
-      brand: ".brand, .product-brand, .manufacturer",
-      sku: ".sku, .product-sku, .product-code",
+      specsList: ".product__description dl, .product-description dl, .product__description ul",
+      specItem: "dt, li",
+      specValueDD: "dd",
+      mainImage: ".product__media img, .product-single__media img, .product img",
+      galleryImages: ".product__media img, .product-single__media img, .product__media-list img",
+      specsTab: ".product__description, .product-description",
+      breadcrumbs: ".breadcrumb, .breadcrumbs",
+      availability: ".product-form__submit, .availability, .stock",
+      brand: ".product__vendor, .vendor, .product-vendor",
+      sku: "[data-sku], .sku, .product-sku"
     },
     searchSelectors: {
-      input: "input[name=\"q\"], input[name=\"search\"], #search, .search-input",
-      button: "button[type=\"submit\"], .search-btn, .search-button",
-      results: ".search-results, .products-grid, .product-listing",
+      input: "input[name=\"q\"], input[type=\"search\"]",
+      button: "button[type=\"submit\"], input[type=\"submit\"]",
+      results: ".product-grid, .search-results, .collection"
     },
   },
 
@@ -106,8 +106,7 @@ const SITES = {
 
   // UNVERIFIED (czone, techmatched, zestrogaming below): I confirmed these
   // three sites are live, but couldn't pull a real product page to check
-  // actual CSS classes, so these reuse the generic template from techlad/
-  // zahcomputers above. Before running at volume: open one product page on
+  // actual CSS classes, so these reuse the generic template from zahcomputers above. Before running at volume: open one product page on
   // each, inspect-element the price and title, and confirm the selectors
   // below actually match. If they don't, that site will just silently
   // return nothing instead of erroring — worth testing on 1 product first.
