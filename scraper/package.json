@@ -7,9 +7,12 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "enrich": "node src/enrich_new_products.js",
     "enrich:fields": "node src/enrich_missing_fields.js",
-    "audit": "node src/audit_images.js",
-    "enrich:audit": "node src/audit_images.js",
-    "cleanup:images": "node src/cleanup_duplicate_images.js"
+    "audit": "npm run audit:images && npm run audit:products",
+    "enrich:audit": "npm run audit",
+    "cleanup:images": "node src/cleanup_duplicate_images.js",
+    "audit:images": "node src/audit_images.js",
+    "audit:products": "node src/audit_products.js",
+    "rescrape:audit": "node src/enrich_new_products.js --retry-audit"
   },
   "keywords": [],
   "type": "commonjs",
