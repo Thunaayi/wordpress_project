@@ -53,11 +53,13 @@ function nameScore(target, source) {
   const a = tokens(target), b = tokens(source);
   if (!a.length || !b.length) return 0;
   const setB = new Set(b);
+  const targetCritical = criticalTokens(target);
+  const sourceCritical = new Set(criticalTokens(source));
+  // A different model number/capacity is not a close match; it is a rejection.
+  if (targetCritical.some(token => /\\d/.test(token) && !sourceCritical.has(token))) return 0;
   const intersection = a.filter(token => setB.has(token)).length;
   const union = new Set([...a, ...b]).size;
-  let score = union ? intersection / union : 0;
-  const ca = criticalTokens(target), cb = new Set(criticalTokens(source));
-  if (ca.some(token => !cb.has(token))) score *= 0.65;
+  const score = union ? intersection / union : 0;
   return Number(score.toFixed(4));
 }
 function originalSpecsPresent(row) {
