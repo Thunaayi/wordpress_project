@@ -6,7 +6,9 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "enrich": "node src/enrich_new_products.js",
-    "enrich:fields": "node src/enrich_missing_fields.js"
+    "enrich:fields": "node src/enrich_missing_fields.js",
+    "audit": "node src/audit_images.js",
+    "enrich:audit": "node src/audit_images.js"
   },
   "keywords": [],
   "type": "commonjs",
