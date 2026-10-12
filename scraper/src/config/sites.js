@@ -119,7 +119,7 @@ const SITES = {
       "https://www.czone.com.pk/search.aspx?search={query}",
       "https://www.czone.com.pk/?s={query}&post_type=product"
     ],
-    productUrlPattern: /\\/[^/]+-p\\.\\d+\\.aspx$/i,
+    productUrlPattern: /\/[^/]+-p\.\d+\.aspx$/i,
     selectors: {
       searchResults: ".search-results, .product-list, .products",
       productLink: "a[href*=\".aspx\"]",
