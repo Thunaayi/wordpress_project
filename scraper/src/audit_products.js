@@ -62,14 +62,24 @@ function nameScore(target, source) {
   const score = union ? intersection / union : 0;
   return Number(score.toFixed(4));
 }
-function originalSpecsPresent(row) {
-  const attrNames = Object.keys(row).filter(name => /^attribute\s*\d+\s*name$/i.test(name));
-  const pairs = attrNames.filter(name => {
-    const n = name.match(/(\d+)/)?.[1];
-    return clean(row[name]) && clean(row["Attribute " + n + " value"] || row["Attribute " + n + " Value"] || row["Attribute " + n + " value "]);
-  });
-  if (pairs.length >= 1) return true;
-  return Boolean(clean(row.Specifications || row.Specs || row.Features || row["Technical details"]));
+function descriptionHasStructuredSpecs(value) {
+  const raw = String(value ?? "");
+  if (!raw.trim()) return false;
+  const plain = raw
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<\/(?:tr|li|p|div|dd|dt|h[1-6])\s*>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+  const labelled = plain.split(/[\n|•;]/).map(clean).filter(line =>
+    /^[^:：]{2,55}\s*[:：]\s*\S{1,}/.test(line)
+  );
+  const technical = (plain.match(/\b\d+(?:\.\d+)?\s*(?:mm|cm|inch|inches|ghz|mhz|gb|tb|mb|w|watts?|rpm|°c|°f|v|volts?|ports?|cores?|threads?|ddr[3456]|pcie|usb\s*[\d.]|wi-?fi|bluetooth|atx|matx|mini-itx|am5|lga\s*\d+)\b/gi) || []).length;
+  const hasSpecHeading = /\b(specifications?|technical details?|product details|features)\b/i.test(plain);
+  return labelled.length >= 2 || technical >= 3 || (hasSpecHeading && technical >= 1);
 }
 function imageReferenceIssues(images, productName, productId) {
   const issues = [];
@@ -108,7 +118,7 @@ function main() {
     columns: true, skip_empty_lines: true, relax_column_count: true, bom: true
   });
   const enriched = loadResults();
-  const auditHeaders = ["ID","SKU","Name","Category","Original image status","Prior status","Source","Source product name","Name score","Image count","Specs count","Description present","Image issues","Audit decision","Retry reasons","Source URL"];
+  const auditHeaders = ["ID","SKU","Name","Category","Original image status","Prior status","Source","Source product name","Name score","Image count","Specs object count","Structured specs in description","Description present","Image issues","Audit decision","Retry reasons","Source URL"];
   const queueHeaders = ["ID","SKU","Name","Category","Reason","Prior status","Source URL","Name score","Specs count","Image count"];
   const auditRows = [], queueRows = [];
   let excludedWithImages = 0;
@@ -134,13 +144,14 @@ function main() {
     const specs = result.specs && typeof result.specs === "object" ? result.specs : {};
     const specsCount = Object.keys(specs).filter(k => clean(specs[k])).length;
     const descriptionPresent = Boolean(clean(result.description || result.shortDescription));
+    const embeddedSpecs = descriptionHasStructuredSpecs(result.description || result.shortDescription);
     const images = Array.isArray(result.images) ? result.images : [];
     const imageIssues = imageReferenceIssues(images, product.name, product.id);
     const reasons = [];
 
     if (!sourceName) reasons.push("SOURCE_PRODUCT_NAME_MISSING");
     else if (score < 0.28) reasons.push("SOURCE_PRODUCT_NAME_MISMATCH");
-    if (!specsCount) reasons.push("SCRAPED_SPECS_MISSING");
+    if (!specsCount && !embeddedSpecs) reasons.push("SCRAPED_SPECS_MISSING");
     if (!descriptionPresent) reasons.push("SCRAPED_DESCRIPTION_MISSING");
     if (!images.length) reasons.push("SCRAPED_IMAGES_MISSING");
     for (const issue of imageIssues) {
@@ -158,7 +169,7 @@ function main() {
     auditRows.push([
       product.id,product.sku,product.name,product.category,"MISSING_IMAGE",
       result.status || "UNPROCESSED",result.source || "",sourceName,score,images.length,specsCount,
-      descriptionPresent ? "YES" : "NO",imageIssues.join(" | "),decision,uniqueReasons.join(" | "),sourceUrl
+      embeddedSpecs ? "YES" : "NO",descriptionPresent ? "YES" : "NO",imageIssues.join(" | "),decision,uniqueReasons.join(" | "),sourceUrl
     ]);
     if (uniqueReasons.length) {
       queueRows.push([
@@ -170,7 +181,7 @@ function main() {
 
   writeCsv(AUDIT_CSV, auditHeaders, auditRows);
   writeCsv(QUEUE_CSV, queueHeaders, queueRows);
-  const pass = auditRows.filter(row => row[13] === "PASS").length;
+  const pass = auditRows.filter(row => row[14] === "PASS").length;
   console.log("=== Product quality audit (read-only) ===");
   console.log("Original inventory rows inspected: " + inventoryRows.length);
   console.log("Products excluded because original Images field is populated: " + excludedWithImages);
