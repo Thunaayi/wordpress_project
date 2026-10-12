@@ -893,11 +893,27 @@ async function main() {
           try {
             const retryData = await extractProduct(page, candidate.url);
             const retryScore = scoreMatch(target.name, retryData.name);
-            if (!looksLikeGenericProductName(retryData.name) && retryScore >= MIN_MATCH) {
+            const genericRetry = looksLikeGenericProductName(retryData.name);
+            appendSearchAudit({
+              productId: target.id || target.sku, targetName: target.name,
+              retailer: candidate.source || "", query: term, searchUrl: candidate.url,
+              candidateName: retryData.name, candidateUrl: candidate.url, score: retryScore,
+              decision: (!genericRetry && retryScore >= MIN_MATCH) ? "FALLBACK_PRODUCT_PAGE_ACCEPTED" : "FALLBACK_PRODUCT_PAGE_REJECTED",
+              reason: genericRetry ? "Fallback candidate resolved to a generic/non-product page" :
+                retryScore < MIN_MATCH ? "Fallback product title below minimum match threshold" : "Fallback product title validated"
+            });
+            if (!genericRetry && retryScore >= MIN_MATCH) {
               fallback = { ...candidate, data: retryData, score: retryScore };
               break;
             }
-          } catch {}
+          } catch (error) {
+            appendSearchAudit({
+              productId: target.id || target.sku, targetName: target.name,
+              retailer: candidate.source || "", query: term, searchUrl: candidate.url,
+              candidateName: candidate.matchedText || "", candidateUrl: candidate.url,
+              score: candidate.score, decision: "FALLBACK_PRODUCT_PAGE_ERROR", reason: error.message
+            });
+          }
         }
 
         if (!fallback) {
