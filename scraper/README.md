@@ -20,6 +20,8 @@ npm run enrich
 
 The source of truth for the eligibility rule and project constraints is the repository-root `AGENTS.md`. Read it before changing scraper behavior.
 
+**Active retailer sources:** Czone, PCLab, Tech.com.pk, ZAH Computers, TechMatched, Zestro Gaming, and MHK Tech Zone. Techlad.pk has been removed while it is down. MHK Tech Zone uses WooCommerce-style product URLs; validate its selectors with a small batch before relying on it at scale.
+
 ## Recommended workflow
 
 1. Run a small enrichment batch with `ENRICH_LIMIT` set.
@@ -54,7 +56,7 @@ The retry runner will not scrape a product if the original export has any popula
 
 ## Important output files
 
-- `output/search_audit.csv`: actual retailer/search-engine checks, query, candidate names/URLs/scores, close-match rejections, navigation errors, and final product-page title validation.
+- `output/search_audit.csv`: actual retailer/search-engine checks, query, candidate names/URLs/scores, close-match rejections, navigation errors, and final product-page title validation. The active source list excludes Techlad.pk while it is unavailable and includes MHK Tech Zone.
 - `output/product_quality_audit.csv`: quality check results for image-missing products.
 - `output/rescrape_queue.csv`: retry candidates and reasons.
 - `output/image_audit.csv`: local exact duplicate groups and hashes.
