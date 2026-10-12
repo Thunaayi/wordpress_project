@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { parse } = require("csv-parse/sync");
 const puppeteer = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
@@ -500,12 +501,15 @@ async function saveImages(urls, sourceUrl, productName, productId) {
   const dir = path.join(DATA_DIR, "images");
   fs.mkdirSync(dir, { recursive: true });
   const saved = [];
+  const seenUrls = new Set();
+  const seenHashes = new Set();
   const base = imageSlug(productName);
   const identity = productId ? "-" + imageSlug(String(productId)) : "";
 
   for (let i = 0; i < Math.min(urls.length, 8); i++) {
     const url = normalizeImageUrl(urls[i]);
-    if (!url) continue;
+    if (!url || seenUrls.has(url)) continue;
+    seenUrls.add(url);
 
     const filename = base + identity + (i ? "-" + i : "") + extension(url);
     const savePath = path.join(dir, filename);
@@ -513,6 +517,16 @@ async function saveImages(urls, sourceUrl, productName, productId) {
     try {
       const buffer = await fetchBinary(url, sourceUrl);
       if (buffer.length < 1000) continue;
+
+      // Different URLs can return identical file bytes. Skip duplicates for
+      // this product so the saved image list contains unique downloads.
+      const digest = crypto.createHash("sha256").update(buffer).digest("hex");
+      if (seenHashes.has(digest)) {
+        console.log("      duplicate image skipped: " + url);
+        continue;
+      }
+      seenHashes.add(digest);
+
       fs.writeFileSync(savePath, buffer);
       saved.push("data/images/" + filename);
     } catch (e) {
