@@ -69,7 +69,8 @@ If the queue is larger, repeat with appropriate batch sizes. The queue is genera
 ## Image handling and cleanup safety
 
 - New image names should be descriptive, filesystem-safe product-name slugs, with a stable product ID where available and deterministic gallery suffixes.
-- Preserve image URL query parameters unless it is proven that they do not identify different gallery assets.
+- Preserve image URL paths and query parameters as provided by the retailer. Do not strip WordPress thumbnail suffixes such as `-300x300`; some stores expose only the derivative URL and rewriting it can cause HTTP 404.
+- Prefer product-gallery images over page-wide image scans so retailer logos, favicons, and UI icons do not enter the product image list.
 - Deduplicate exact file bytes safely; do not assume different image hashes mean images are visually different.
 - `npm run cleanup:images` is preview-only and writes `output/image_cleanup_plan.csv` and `output/image_cleanup_plan.json`.
 - Never apply cleanup until the preview is reviewed. Applying requires both `--apply` and `--confirm=YES`; it backs up changed output files and moves duplicates to `data/images/.duplicate-quarantine/` rather than permanently deleting them.
@@ -93,7 +94,7 @@ Do not commit generated reports, product exports, downloaded product images, or 
 ## Reliability and test requirements
 
 - Preserve checkpoints so interruptions do not lose completed products.
-- Products with `PARTIAL`, `NO_MATCH`, or `ERROR` must remain retryable. `MATCHED` may be retried only via the explicit audit queue when the audit found a quality issue.
+- Products with `PARTIAL`, `NO_MATCH`, or `ERROR` must remain retryable. `MATCHED` can be retried through the explicit audit queue or by setting `ENRICH_FORCE_NAMES` to exact product names separated by `|` when a manual quality review finds bad images. The original-export missing-image gate still applies.
 - Do not mark a product as complete when specs, description, or images are missing.
 - Run syntax checks for changed JavaScript and parse `package.json` before reporting success. Do not claim live scraping or local output audits were run unless they were actually executed against the user's local files.
 - Before changing a file, fetch/read its current contents and preserve unrelated work. Never overwrite a whole script with a simplified replacement to fix one issue.
