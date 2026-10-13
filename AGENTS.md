@@ -103,7 +103,7 @@ Do not commit generated reports, product exports, downloaded product images, or 
 ## Reliability and test requirements
 
 - Preserve checkpoints so interruptions do not lose completed products.
-- Products with `PARTIAL`, `NO_MATCH`, or `ERROR` must remain retryable. `MATCHED` can be retried through the explicit audit queue or by setting `ENRICH_FORCE_NAMES` to exact product names separated by `|` when a manual quality review finds bad images. The original-export missing-image gate still applies.
+- Products with `PARTIAL` or `ERROR` remain eligible for normal retry. `NO_MATCH` is remembered and skipped by normal runs; it can only be retried with `npm run retry:unfound`, which checks previously untried retailers only. `MATCHED` can be retried through the explicit audit queue or by setting `ENRICH_FORCE_NAMES` to exact product names separated by `|` when a manual quality review finds bad images. The original-export missing-image gate still applies.
 - Do not mark a product as complete when specs, description, or images are missing.
 - Run syntax checks for changed JavaScript and parse `package.json` before reporting success. Do not claim live scraping or local output audits were run unless they were actually executed against the user's local files.
 - Before changing a file, fetch/read its current contents and preserve unrelated work. Never overwrite a whole script with a simplified replacement to fix one issue.
