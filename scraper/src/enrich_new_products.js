@@ -28,6 +28,7 @@ const MASTER_JSON = path.join(OUTPUT_DIR, "product_enrichment_status.json");
 const SEARCH_AUDIT_FILE = path.join(OUTPUT_DIR, "search_audit.csv");
 const AUDIT_QUEUE_FILE = path.join(OUTPUT_DIR, "rescrape_queue.csv");
 const RETRY_AUDIT = argv.includes("--retry-audit");
+const RETRY_UNFOUND = argv.includes("--retry-unfound");
 const MIN_MATCH = Number(process.env.ENRICH_MIN_MATCH || 0.72);
 const FORCE_NAMES = new Set((process.env.ENRICH_FORCE_NAMES || "").split("|").map(normalize).filter(Boolean));
 
@@ -790,6 +791,28 @@ function loadPreviousResults() {
   }
 }
 
+function loadPreviouslyCheckedSources() {
+  const byProduct = new Map();
+  if (!fs.existsSync(SEARCH_AUDIT_FILE)) return byProduct;
+  try {
+    const rows = parse(fs.readFileSync(SEARCH_AUDIT_FILE, "utf8"), {
+      columns: true, skip_empty_lines: true, bom: true
+    });
+    const knownSources = new Set(SOURCES.map(source => source.name));
+    for (const row of rows) {
+      const productId = clean(row["Product ID"]);
+      const retailer = clean(row.Retailer);
+      if (!productId || !knownSources.has(retailer)) continue;
+      if (!byProduct.has(productId)) byProduct.set(productId, new Set());
+      byProduct.get(productId).add(retailer);
+    }
+  } catch (error) {
+    console.warn("Could not read previous retailer checks; retry mode will stop rather than risk repeating searches: " + error.message);
+    throw error;
+  }
+  return byProduct;
+}
+
 function saveOutputs(results, inventory) {
   fs.mkdirSync(OUTPUT_DIR,{recursive:true});
   const byKey = new Map(results.map(r => [productKey(r), r]));
@@ -853,6 +876,7 @@ async function main() {
 
   const inventory = loadInventory();
   const previous = loadPreviousResults();
+  const previouslyCheckedSources = RETRY_UNFOUND ? loadPreviouslyCheckedSources() : new Map();
   const candidateTargets = inventory.filter(p => !p.hasExistingImage);
   let targets;
   if (RETRY_AUDIT) {
@@ -861,12 +885,15 @@ async function main() {
     const queueKeys = new Set(queueRows.map(row => productKey({ id: row.ID, sku: row.SKU, name: row.Name })).filter(Boolean));
     targets = candidateTargets.filter(p => queueKeys.has(productKey(p)));
     console.log("Audit retry mode: selected " + targets.length + " queued products (still gated by original image-missing inventory).");
+  } else if (RETRY_UNFOUND) {
+    targets = candidateTargets.filter(p => String(previous.get(productKey(p))?.status || "").toUpperCase() === "NO_MATCH");
+    console.log("Unfound-only retry mode: selected " + targets.length + " previously unresolved products; only never-before-checked retailers will be searched.");
   } else {
     targets = candidateTargets.filter(p => {
       if (FORCE_NAMES.has(normalize(p.name))) return true;
       const prior = previous.get(productKey(p));
       const priorStatus = String(prior?.status || "").toUpperCase();
-      return !prior || !["MATCHED", "SKIPPED"].includes(priorStatus);
+      return !prior || !["MATCHED", "SKIPPED", "NO_MATCH"].includes(priorStatus);
     });
     // Put explicitly forced names first so a small ENRICH_LIMIT reliably
     // retries the requested products before other pending/partial inventory.
@@ -924,10 +951,19 @@ async function main() {
     let best = null;
 
     const searchTerms = searchTermsForTarget(target);
+    const productAuditId = String(target.id || target.sku || "");
+    const alreadyChecked = previouslyCheckedSources.get(productAuditId) || new Set();
+    const sourcesToSearch = RETRY_UNFOUND
+      ? SOURCES.filter(source => !alreadyChecked.has(source.name))
+      : SOURCES;
+    if (RETRY_UNFOUND) {
+      console.log("    Previously checked: " + (alreadyChecked.size ? [...alreadyChecked].join(", ") : "none recorded"));
+      console.log("    New retailers available: " + (sourcesToSearch.length ? sourcesToSearch.map(source => source.name).join(", ") : "none"));
+    }
 
     // SKU/model searches are much safer than broad product-name searches.
     for (const term of searchTerms.slice(0, 1)) {
-      for (const source of SOURCES) {
+      for (const source of sourcesToSearch) {
         const candidate = await searchSite(page, source, term, target.id || target.sku, target.name);
         if (candidate && (!best || candidate.score > best.score)) best = candidate;
         if (best && best.score >= 0.96) break;
@@ -938,7 +974,7 @@ async function main() {
     // Fall back to product-name searches when the SKU is not indexed.
     if (!best || best.score < 0.92) {
       for (const term of searchTerms.slice(target.sku && target.sku.length >= 4 ? 1 : 0)) {
-        for (const source of SOURCES) {
+        for (const source of sourcesToSearch) {
           const candidate = await searchSite(page, source, term, target.id || target.sku, target.name);
           if (candidate && (!best || candidate.score > best.score)) best = candidate;
           if (best && best.score >= 0.96) break;
@@ -947,8 +983,10 @@ async function main() {
       }
     }
 
-    // External search is a last resort, not the first matcher.
-    if (!best || best.score < MIN_MATCH) {
+    // External search is a last resort for normal runs. During --retry-unfound,
+    // Google/Bing could rediscover the exact same retailers already exhausted,
+    // so only newly added, never-before-checked retailer sources are allowed.
+    if (!RETRY_UNFOUND && (!best || best.score < MIN_MATCH)) {
       for (const term of searchTerms) {
         const webCandidate = await webSearch(page, term, target.id || target.sku, target.name);
         if (webCandidate && (!best || webCandidate.score > best.score)) best = webCandidate;
@@ -957,11 +995,21 @@ async function main() {
     }
 
     if (!best || best.score < MIN_MATCH) {
+      const reason = RETRY_UNFOUND
+        ? (sourcesToSearch.length
+          ? "Still unresolved after trying newly added retailers: " + sourcesToSearch.map(source => source.name).join(", ")
+          : "No new configured retailers remain; all current sources were already checked. Add a new source before retrying.")
+        : "No sufficiently confident product-page match";
       console.log("    NOT FOUND (best: " + (best ? best.score.toFixed(2) : "none") + ")");
+      appendSearchAudit({
+        productId: productAuditId, targetName: target.name,
+        retailer: "SCRAPER", query: searchTerms.join(" | "), decision: "NO_MATCH_RECORDED",
+        reason
+      });
       results.push({
         ...target, status: "NO_MATCH",
         matchScore: best ? best.score : 0,
-        candidateUrl: best?.url || "", candidateName: best?.matchedText || "", reason: "No sufficiently confident product-page match"
+        candidateUrl: best?.url || "", candidateName: best?.matchedText || "", reason
       });
       continue;
     }
