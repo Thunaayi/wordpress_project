@@ -28,7 +28,7 @@ Current primary retailer sources include czone.com.pk, pclab.pk, tech.com.pk, za
 
 MHK Tech Zone was verified through indexed live pages to use WooCommerce-style `/product/` and `/product-category/` URLs. The scraper uses its `/?s=...&post_type=product` search endpoint. Its selectors still require a small live scrape validation before large batches.
 
-Never accept a result simply because a search returned a URL. Validate the actual product-page title/name against the Techistics product name. Reject generic category/shop pages and mismatches in model number, capacity, RAM size, GPU/CPU identifiers, or other critical model tokens. Generic words such as “computer”, “gaming”, “memory”, “graphics”, and color names should not dominate matching.
+Never accept a result simply because a search returned a URL. Validate the actual product-page title/name against the Techistics product name. Reject generic category/shop pages and mismatches in explicitly named color variants, model number, capacity, RAM size, GPU/CPU identifiers, or other critical model tokens. If the target says Black and a candidate says Blue, it is not a valid match. Generic words such as “computer”, “gaming”, “memory”, “graphics”, and color names should not dominate matching.
 
 Do not silently swallow site failures or silently discard candidate products. The search audit must record:
 - Each retailer/search engine actually checked and the query used.
