@@ -18,6 +18,18 @@ $env:ENRICH_LIMIT="10"
 npm run enrich
 ```
 
+A product marked `NO_MATCH` is remembered in `output/enriched_products.json` and is skipped by future normal `npm run enrich` runs. It will not repeatedly hit the same retailers.
+
+To revisit previously unresolved products, use the dedicated command below. It reads `output/search_audit.csv` and searches only currently configured retailers that have **never been checked for that product**:
+
+```powershell
+$env:ENRICH_LIMIT="10"
+npm run retry:unfound
+Remove-Item Env:ENRICH_LIMIT
+```
+
+This command only retries products already marked `NO_MATCH`. It deliberately does not use Google/Bing as a fallback because those could rediscover the same exhausted retailers. If no new retailers have been added since the last search, it reports that no new sources remain and does not repeat those searches. Add a genuinely new source to the source list first, then run `npm run retry:unfound` again. Keep `output/enriched_products.json` and `output/search_audit.csv` between runs; they are the persistent checkpoint and tried-site ledger.
+
 To deliberately retry specific products that were already marked MATCHED (for example, if their downloaded photos are broken), use normalized exact product names separated by `|`:
 
 ```powershell
@@ -52,6 +64,7 @@ The source of truth for the eligibility rule and project constraints is the repo
 | `npm run audit:images` | Hash local images and report exact byte-for-byte duplicates. |
 | `npm run audit:products` | Audit source-name match, images, description, and specs for original image-missing products. |
 | `npm run rescrape:audit` | Re-run the matcher for rows in `output/rescrape_queue.csv`; original inventory eligibility is rechecked. |
+| `npm run retry:unfound` | Retry saved `NO_MATCH` products only on configured retailers not previously checked for that product. |
 | `npm run cleanup:images` | Preview an exact-duplicate cleanup plan. Preview-only by default. |
 | `npm test` | Run syntax checks across scraper modules. |
 
