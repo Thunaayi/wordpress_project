@@ -1010,9 +1010,12 @@ async function main() {
         reason
       });
       results.push({
+        ...(previous.get(productKey(target)) || {}),
         ...target, status: "NO_MATCH",
-        matchScore: best ? best.score : 0,
-        candidateUrl: best?.url || "", candidateName: best?.matchedText || "", reason
+        matchScore: best ? best.score : (previous.get(productKey(target))?.matchScore || 0),
+        candidateUrl: best?.url || previous.get(productKey(target))?.candidateUrl || "",
+        candidateName: best?.matchedText || previous.get(productKey(target))?.candidateName || "",
+        reason
       });
       continue;
     }
