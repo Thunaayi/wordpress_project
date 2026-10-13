@@ -1028,32 +1028,46 @@ async function main() {
         let fallback = null;
         const retryTerms = searchTermsForTarget(target);
         for (const term of retryTerms) {
-          const candidate = await webSearch(page, term, target.id || target.sku, target.name);
-          if (!candidate || candidate.url === best.url || candidate.score < MIN_MATCH) continue;
-          try {
-            const retryData = await extractProduct(page, candidate.url);
-            const retryScore = scoreMatch(target.name, retryData.name);
-            const genericRetry = looksLikeGenericProductName(retryData.name);
-            appendSearchAudit({
-              productId: target.id || target.sku, targetName: target.name,
-              retailer: candidate.source || "", query: term, searchUrl: candidate.url,
-              candidateName: retryData.name, candidateUrl: candidate.url, score: retryScore,
-              decision: (!genericRetry && retryScore >= MIN_MATCH) ? "FALLBACK_PRODUCT_PAGE_ACCEPTED" : "FALLBACK_PRODUCT_PAGE_REJECTED",
-              reason: genericRetry ? "Fallback candidate resolved to a generic/non-product page" :
-                retryScore < MIN_MATCH ? "Fallback product title below minimum match threshold" : "Fallback product title validated"
-            });
-            if (!genericRetry && retryScore >= MIN_MATCH) {
-              fallback = { ...candidate, data: retryData, score: retryScore };
-              break;
+          const retryCandidates = [];
+          if (RETRY_UNFOUND) {
+            // Never use a search engine in new-source mode: it may send us back
+            // to a retailer already exhausted for this product.
+            for (const source of sourcesToSearch) {
+              const candidate = await searchSite(page, source, term, productAuditId, target.name);
+              if (candidate && candidate.url !== best.url && candidate.score >= MIN_MATCH) retryCandidates.push(candidate);
             }
-          } catch (error) {
-            appendSearchAudit({
-              productId: target.id || target.sku, targetName: target.name,
-              retailer: candidate.source || "", query: term, searchUrl: candidate.url,
-              candidateName: candidate.matchedText || "", candidateUrl: candidate.url,
-              score: candidate.score, decision: "FALLBACK_PRODUCT_PAGE_ERROR", reason: error.message
-            });
+          } else {
+            const candidate = await webSearch(page, term, productAuditId, target.name);
+            if (candidate && candidate.url !== best.url && candidate.score >= MIN_MATCH) retryCandidates.push(candidate);
           }
+
+          for (const candidate of retryCandidates) {
+            try {
+              const retryData = await extractProduct(page, candidate.url);
+              const retryScore = scoreMatch(target.name, retryData.name);
+              const genericRetry = looksLikeGenericProductName(retryData.name);
+              appendSearchAudit({
+                productId: productAuditId, targetName: target.name,
+                retailer: candidate.source || "", query: term, searchUrl: candidate.url,
+                candidateName: retryData.name, candidateUrl: candidate.url, score: retryScore,
+                decision: (!genericRetry && retryScore >= MIN_MATCH) ? "FALLBACK_PRODUCT_PAGE_ACCEPTED" : "FALLBACK_PRODUCT_PAGE_REJECTED",
+                reason: genericRetry ? "Fallback candidate resolved to a generic/non-product page" :
+                  retryScore < MIN_MATCH ? "Fallback product title below minimum match threshold" : "Fallback product title validated"
+              });
+              if (!genericRetry && retryScore >= MIN_MATCH) {
+                fallback = { ...candidate, data: retryData, score: retryScore };
+                break;
+              }
+            } catch (error) {
+              appendSearchAudit({
+                productId: productAuditId, targetName: target.name,
+                retailer: candidate.source || "", query: term, searchUrl: candidate.url,
+                candidateName: candidate.matchedText || "", candidateUrl: candidate.url,
+                score: candidate.score, decision: "FALLBACK_PRODUCT_PAGE_ERROR", reason: error.message
+              });
+            }
+          }
+          if (fallback) break;
         }
 
         if (!fallback) {
