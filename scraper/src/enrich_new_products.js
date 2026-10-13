@@ -105,6 +105,15 @@ function modelTokens(s) {
 }
 
 function scoreMatch(target, candidate) {
+  // Color is part of the SKU when the target names one. Do not let the generic
+  // token filter hide "black" and accept a blue/rose/white variant instead.
+  const colors = ["black", "white", "silver", "grey", "gray", "red", "blue", "green", "pink", "purple", "gold", "orange", "yellow", "rose", "graphite", "off white"];
+  const targetNorm = normalize(target);
+  const candidateNorm = normalize(candidate);
+  const targetColor = colors.find(color => new RegExp("\\b" + color.replace(/[- ]/g, "[ -]?") + "\\b").test(targetNorm));
+  const candidateColor = colors.find(color => new RegExp("\\b" + color.replace(/[- ]/g, "[ -]?") + "\\b").test(candidateNorm));
+  if (targetColor && candidateColor && targetColor !== candidateColor) return 0;
+
   const a = tokens(target);
   const b = tokens(candidate);
   if (!a.size || !b.size) return 0;
