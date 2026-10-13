@@ -415,7 +415,7 @@ async function extractProductOnce(page, url) {
     pushImage(meta("og:image"));
     pushImage(meta("twitter:image"));
 
-    document.querySelectorAll("img").forEach(img => {
+    document.querySelectorAll(".woocommerce-product-gallery img, .woocommerce-product-gallery__wrapper img, .product-gallery img, .product-images img, .product-image-gallery img, .images img").forEach(img => {
       const altText = (attr(img, "alt") + " " + attr(img, "title") + " " + attr(img, "class")).toLowerCase();
       const width = Number(img.naturalWidth || img.width || 0);
       const height = Number(img.naturalHeight || img.height || 0);
