@@ -29,6 +29,7 @@ const SEARCH_AUDIT_FILE = path.join(OUTPUT_DIR, "search_audit.csv");
 const AUDIT_QUEUE_FILE = path.join(OUTPUT_DIR, "rescrape_queue.csv");
 const RETRY_AUDIT = argv.includes("--retry-audit");
 const MIN_MATCH = Number(process.env.ENRICH_MIN_MATCH || 0.72);
+const FORCE_NAMES = new Set((process.env.ENRICH_FORCE_NAMES || "").split("|").map(normalize).filter(Boolean));
 
 const SOURCES = [
   { name: "czone.com.pk", domain: "czone.com.pk", search: q => "https://www.czone.com.pk/search.aspx?search=" + encodeURIComponent(q) },
@@ -856,6 +857,7 @@ async function main() {
     console.log("Audit retry mode: selected " + targets.length + " queued products (still gated by original image-missing inventory).");
   } else {
     targets = candidateTargets.filter(p => {
+      if (FORCE_NAMES.has(normalize(p.name))) return true;
       const prior = previous.get(productKey(p));
       const priorStatus = String(prior?.status || "").toUpperCase();
       return !prior || !["MATCHED", "SKIPPED"].includes(priorStatus);
