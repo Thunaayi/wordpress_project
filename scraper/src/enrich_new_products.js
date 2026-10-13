@@ -890,10 +890,13 @@ async function main() {
     console.log("Unfound-only retry mode: selected " + targets.length + " previously unresolved products; only never-before-checked retailers will be searched.");
   } else {
     targets = candidateTargets.filter(p => {
-      if (FORCE_NAMES.has(normalize(p.name))) return true;
       const prior = previous.get(productKey(p));
       const priorStatus = String(prior?.status || "").toUpperCase();
-      return !prior || !["MATCHED", "SKIPPED", "NO_MATCH"].includes(priorStatus);
+      // NO_MATCH is only retried by --retry-unfound, which excludes every
+      // retailer already recorded in the search ledger.
+      if (priorStatus === "NO_MATCH") return false;
+      if (FORCE_NAMES.has(normalize(p.name))) return true;
+      return !prior || !["MATCHED", "SKIPPED"].includes(priorStatus);
     });
     // Put explicitly forced names first so a small ENRICH_LIMIT reliably
     // retries the requested products before other pending/partial inventory.
