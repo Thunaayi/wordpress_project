@@ -520,10 +520,9 @@ function normalizeImageUrl(url) {
     for (const key of [...u.searchParams.keys()]) {
       if (RESIZE_ONLY_QUERY_PARAMS.has(key.toLowerCase())) u.searchParams.delete(key);
     }
-    // WordPress's own thumbnail naming convention ("image-300x300.jpg" next
-    // to "image.jpg") — same idea as the query-param strip above, just in
-    // the path instead of the query string.
-    u.pathname = u.pathname.replace(/-\d+x\d+(?=\.[a-z0-9]+$)/i, "");
+    // Preserve the source path and query. Some stores only serve a resized
+    // derivative, so stripping "-300x300" or resize query parameters can turn
+    // a valid image URL into HTTP 404. saveImages() deduplicates identical bytes.
     return u.href;
   } catch {
     return null;
