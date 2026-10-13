@@ -868,6 +868,9 @@ async function main() {
       const priorStatus = String(prior?.status || "").toUpperCase();
       return !prior || !["MATCHED", "SKIPPED"].includes(priorStatus);
     });
+    // Put explicitly forced names first so a small ENRICH_LIMIT reliably
+    // retries the requested products before other pending/partial inventory.
+    targets.sort((a, b) => Number(FORCE_NAMES.has(normalize(b.name))) - Number(FORCE_NAMES.has(normalize(a.name))));
   }
   console.log("Inventory: " + inventory.length);
   console.log("Products with existing images (excluded): " + inventory.filter(p => p.hasExistingImage).length);
