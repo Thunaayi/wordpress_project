@@ -18,6 +18,17 @@ $env:ENRICH_LIMIT="10"
 npm run enrich
 ```
 
+To deliberately retry specific products that were already marked MATCHED (for example, if their downloaded photos are broken), use normalized exact product names separated by `|`:
+
+```powershell
+$env:ENRICH_LIMIT="2"
+$env:ENRICH_FORCE_NAMES="Logitech M331 Silent Plus Wireless Mouse|Logitech M240 Silent Wireless Mouse"
+npm run enrich
+Remove-Item Env:ENRICH_FORCE_NAMES
+```
+
+The retry still obeys the original-export rule: products with any populated `Images` field are excluded. Check the generated image files before using them. The downloader preserves retailer image URLs instead of rewriting thumbnail URLs, and the extractor prioritizes WooCommerce/product-gallery images to reduce 404s and site-icon contamination.
+
 The source of truth for the eligibility rule and project constraints is the repository-root `AGENTS.md`. Read it before changing scraper behavior.
 
 **Active retailer sources:** Czone, PCLab, Tech.com.pk, ZAH Computers, TechMatched, Zestro Gaming, and MHK Tech Zone. Techlad.pk has been removed while it is down. MHK Tech Zone uses WooCommerce-style product URLs; validate its selectors with a small batch before relying on it at scale.
