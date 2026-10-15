@@ -157,6 +157,20 @@ async function extractTechMatchedImages(page, url) {
     });
   });
 }
+function refreshDerivedOutputs(rows) {
+  const statusHeaders = ["ID","SKU","Name","Category","Status","Match score","Matched retailer","Matched product","Matched URL","Images found","Specs found","Description found","Reason"];
+  const statusRows = rows.map(r => [r.id,r.sku,r.name,r.category || "",r.status || "PENDING",r.matchScore || 0,r.source || "",r.sourceName || r.candidateName || "",r.sourceUrl || r.candidateUrl || "",(r.images || []).length,Object.keys(r.specs || {}).length,r.description ? "YES" : "NO",r.reason || ""]);
+  writeCsv(path.join(OUTPUT_DIR, "product_enrichment_status.csv"), statusHeaders, statusRows);
+  fs.writeFileSync(path.join(OUTPUT_DIR, "product_enrichment_status.json"), JSON.stringify({ generatedAt: new Date().toISOString(), total: rows.length, products: rows }, null, 2));
+  const detailedHeaders = ["ID","SKU","Name","Category","Short description","Description","Images","Specifications","Source URL","Source","Match score","Status","Reason"];
+  writeCsv(path.join(OUTPUT_DIR, "enriched_products.csv"), detailedHeaders, rows.map(r => [r.id,r.sku,r.name,r.category || "",r.shortDescription || "",r.description || "",(r.images || []).join(", "),JSON.stringify(r.specs || {}),r.sourceUrl || "",r.source || "",r.matchScore || 0,r.status || "",r.reason || ""]));
+  const wcHeaders = ["ID","SKU","Name","Short description","Description","Images"];
+  writeCsv(path.join(OUTPUT_DIR, "enriched_products_woocommerce.csv"), wcHeaders, rows.filter(r => r.status === "MATCHED" && r.id).map(r => [r.id,r.sku,r.name,r.shortDescription || "",r.description || "",(r.images || []).join(", ")]));
+  for (const status of ["MATCHED","PARTIAL","MULTIPLE_MATCHES","NO_MATCH","ERROR","PENDING","SKIPPED"]) {
+    writeCsv(path.join(OUTPUT_DIR, status.toLowerCase() + ".csv"), statusHeaders, rows.filter(r => r.status === status).map(r => [r.id,r.sku,r.name,r.category || "",r.status,r.matchScore || 0,r.source || "",r.sourceName || r.candidateName || "",r.sourceUrl || r.candidateUrl || "",(r.images || []).length,Object.keys(r.specs || {}).length,r.description ? "YES" : "NO",r.reason || ""]));
+  }
+}
+
 async function main() {
   const { parsed, rows } = loadResults();
   const eligible = loadEligibleIds();
@@ -253,7 +267,8 @@ async function main() {
       const outputRows = [...merged.values()];
       if (Array.isArray(parsed)) fs.writeFileSync(RESULTS_FILE, JSON.stringify(outputRows, null, 2));
       else fs.writeFileSync(RESULTS_FILE, JSON.stringify({ ...parsed, generatedAt: new Date().toISOString(), total: outputRows.length, results: outputRows }, null, 2));
-      console.log("Updated enriched_products.json for " + refreshed.size + " product(s). Other product fields/results were preserved.");
+      refreshDerivedOutputs(outputRows);
+      console.log("Updated enriched_products.json for " + refreshed.size + " product(s). Other product fields/results were preserved.");\n      console.log("Derived status/import-shaped CSV outputs were refreshed from the full saved result set.");
       console.log("Run npm run audit:techmatched-images to refresh the audit after reviewing the new images.");
     }
   }
