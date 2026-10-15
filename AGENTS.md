@@ -109,3 +109,11 @@ Do not commit generated reports, product exports, downloaded product images, or 
 - Before changing a file, fetch/read its current contents and preserve unrelated work. Never overwrite a whole script with a simplified replacement to fix one issue.
 - Keep the primary implementation in `scraper/src/enrich_new_products.js`; avoid reintroducing the older generic `src/index.js` workflow as the solution for this dedicated enrichment task.
 - Keep documentation in sync with actual scripts and command names. If a command's behavior changes, update this file in the same work.
+
+
+## TechMatched image refresh safeguards
+
+- The targeted rescraper rejects exact image bytes already assigned to another active TechMatched product and records hashes accepted earlier in the same run.
+- Reject a color mismatch automatically only when the target and candidate metadata each clearly name one different color; ambiguous/multicolor labels must not be guessed.
+- `.duplicate-quarantine` is a backup and must not be treated as active ownership or deleted by this image fix.
+- Run a small rescrape batch, inspect `output/techmatched_image_audit.csv`, then expand only after reviewing the results.
