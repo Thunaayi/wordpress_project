@@ -64,7 +64,7 @@ The source of truth for the eligibility rule and project constraints is the repo
 | `npm run enrich:fields` | Retry missing description/spec fields from a saved matched source URL. |
 | `npm run audit` | Run both local image audit and product quality audit; no network scraping or file cleanup. |
 | `npm run audit:images` | Hash local images and report exact byte-for-byte duplicates. |
-| `npm run audit:products` | Audit source-name match, images, description, and specs for original image-missing products. |\n| `npm run audit:techmatched-images` | Read-only audit of saved TechMatched image references, missing files, dimensions, and exact duplicate hashes. |\n| `npm run rescrape:techmatched-images -- --limit=5` | Targeted TechMatched-only image refresh from saved source URLs. Original inventory eligibility is enforced; previous files are retained. Rejects explicit single-color conflicts and exact image bytes already assigned to another TechMatched product. |
+| `npm run audit:products` | Audit source-name match, images, description, and specs for original image-missing products. |\n| `npm run audit:techmatched-images` | Read-only audit of saved TechMatched image references, missing files, dimensions, and exact duplicate hashes. |\n| `npm run rescrape:techmatched-images -- --limit=5` | Targeted TechMatched-only image refresh from saved source URLs. Original inventory eligibility is enforced; previous files are retained. Rejects explicit single-color conflicts and exact image bytes already assigned to another TechMatched product. Rejects explicit single-color conflicts and exact image bytes already assigned to another TechMatched product. |
 | `npm run rescrape:audit` | Re-run the matcher for rows in `output/rescrape_queue.csv`; original inventory eligibility is rechecked. |
 | `npm run retry:unfound` | Retry saved `NO_MATCH` products only on configured retailers not previously checked for that product. |
 | `npm run cleanup:images` | Preview an exact-duplicate cleanup plan. Preview-only by default. |
@@ -97,3 +97,8 @@ The search trace is append-only across runs. Filter by product ID and timestamp 
 Do not apply image cleanup until the plan is reviewed. Applying requires both `--apply` and `--confirm=YES`; redundant files are moved to quarantine, not permanently deleted. Cleanup only touches local files and local output references.
 
 Never commit the original product export, generated product reports, or downloaded product images unless explicitly requested.
+
+
+### TechMatched duplicate-image safeguards
+
+The targeted rescraper compares each downloaded image's SHA-256 against active TechMatched product image references and against images accepted earlier in the same run. It rejects exact-byte reuse across different products and conservatively rejects a clear single-color mismatch when the candidate alt text or URL names a different single color. The `.duplicate-quarantine` directory is backup-only and is not treated as active ownership or cleaned by this rescraper. These checks cannot identify every visually incorrect image; review `output/techmatched_image_audit.csv` after a small test batch.
