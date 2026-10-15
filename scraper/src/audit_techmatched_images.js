@@ -102,9 +102,10 @@ function colorTerms(value) {
 function hasConflictingColor(targetName, candidateText) {
   const target = colorTerms(targetName);
   const candidate = colorTerms(candidateText);
-  if (!target.size || !candidate.size) return false;
-  return [...target].some(color => !candidate.has(color)) &&
-    [...candidate].some(color => !target.has(color));
+  // Only reject an unambiguous single-color conflict. Multi-color product
+  // names and vague filenames are too ambiguous for automatic rejection.
+  if (target.size !== 1 || candidate.size !== 1) return false;
+  return [...target][0] !== [...candidate][0];
 }
 
 function slug(v) { return norm(v).replace(/\s+/g, "-").slice(0, 100) || "product"; }
@@ -319,6 +320,9 @@ async function main() {
             fs.mkdirSync(IMAGE_DIR, { recursive: true });
             fs.writeFileSync(destination, buffer);
             saved.push("data/images/" + filename);
+            const currentOwners = existingHashOwners.get(digest) || [];
+            if (!currentOwners.some(owner => key(owner) === key(product))) currentOwners.push(product);
+            existingHashOwners.set(digest, currentOwners);
             if (saved.length >= 8) break;
           } catch (error) {
             console.log("  image skipped: " + candidate.url + " (" + error.message + ")");
