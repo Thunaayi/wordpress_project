@@ -13,8 +13,10 @@
     "audit:images": "node src/audit_images.js",
     "audit:products": "node src/audit_products.js",
     "rescrape:audit": "node src/enrich_new_products.js --retry-audit",
-    "check": "node --check src/index.js && node --check src/config/sites.js && node --check src/scrapers/BaseScraper.js && node --check src/utils/ProductExtractor.js && node --check src/utils/helpers.js && node --check src/enrich_new_products.js && node --check src/enrich_missing_fields.js && node --check src/audit_images.js && node --check src/audit_products.js && node --check src/cleanup_duplicate_images.js",
-    "retry:unfound": "node src/enrich_new_products.js --retry-unfound"
+    "check": "node --check src/index.js && node --check src/config/sites.js && node --check src/scrapers/BaseScraper.js && node --check src/utils/ProductExtractor.js && node --check src/utils/helpers.js && node --check src/enrich_new_products.js && node --check src/enrich_missing_fields.js && node --check src/audit_images.js && node --check src/audit_products.js && node --check src/cleanup_duplicate_images.js && node --check src/audit_techmatched_images.js",
+    "retry:unfound": "node src/enrich_new_products.js --retry-unfound",
+    "audit:techmatched-images": "node src/audit_techmatched_images.js",
+    "rescrape:techmatched-images": "node src/audit_techmatched_images.js --rescrape"
   },
   "keywords": [],
   "type": "commonjs",
