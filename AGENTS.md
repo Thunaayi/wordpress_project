@@ -79,7 +79,7 @@ If the queue is larger, repeat with appropriate batch sizes. The queue is genera
 
 - New image names should be descriptive, filesystem-safe product-name slugs, with a stable product ID where available and deterministic gallery suffixes.
 - Preserve image URL paths and query parameters as provided by the retailer. Do not strip WordPress thumbnail suffixes such as `-300x300`; some stores expose only the derivative URL and rewriting it can cause HTTP 404.
-- Prefer product-gallery images over page-wide image scans so retailer logos, favicons, and UI icons do not enter the product image list.
+- Prefer product-gallery images over page-wide image scans so retailer logos, favicons, and UI icons do not enter the product image list. The TechMatched-only refresh uses gallery-specific selectors and ranks full-size image attributes above thumbnail `src` values.\n- For TechMatched, compare image families after stripping WordPress `-300x300`-style suffixes and known resize-only query parameters, but download the best-ranked original URL rather than blindly rewriting the URL. Keep a dedicated report before refresh; preserve old image files and previous references.
 - Deduplicate exact file bytes safely; do not assume different image hashes mean images are visually different.
 - `npm run cleanup:images` is preview-only and writes `output/image_cleanup_plan.csv` and `output/image_cleanup_plan.json`.
 - Never apply cleanup until the preview is reviewed. Applying requires both `--apply` and `--confirm=YES`; it backs up changed output files and moves duplicates to `data/images/.duplicate-quarantine/` rather than permanently deleting them.
@@ -92,7 +92,7 @@ If the queue is larger, repeat with appropriate batch sizes. The queue is genera
 - `output/matched.csv`, `partial.csv`, `multiple_matches.csv`, `no_match.csv`, `error.csv`, `pending.csv`, `skipped.csv`: status buckets.
 - `output/enriched_products.csv`, `enriched_products.json`, and `enriched_products_woocommerce.csv`: detailed and review/import-shaped outputs.
 - `output/search_audit.csv`: timestamped search trace showing sites/engines, queries, candidate names/URLs, scores, rejected close matches, errors, and product-page title validation. It is also the per-product ledger used by `retry:unfound` to avoid revisiting retailers that have already been checked.
-- `output/image_audit.csv`: local exact-duplicate report.
+- `output/image_audit.csv`: local exact-duplicate report.\n- `output/techmatched_image_audit.csv`: TechMatched-specific image audit report.
 - `output/product_quality_audit.csv`: name/field/image quality audit for eligible products.
 - `output/rescrape_queue.csv`: products needing another pass, still subject to the original missing-image eligibility gate.
 - `output/field_enrichment_status.csv`: independent description/spec retry status.
@@ -105,7 +105,7 @@ Do not commit generated reports, product exports, downloaded product images, or 
 - Preserve checkpoints so interruptions do not lose completed products.
 - Products with `PARTIAL` or `ERROR` remain eligible for normal retry. `NO_MATCH` is remembered and skipped by normal runs; it can only be retried with `npm run retry:unfound`, which checks previously untried retailers only. `MATCHED` can be retried through the explicit audit queue or by setting `ENRICH_FORCE_NAMES` to exact product names separated by `|` when a manual quality review finds bad images. The original-export missing-image gate still applies.
 - Do not mark a product as complete when specs, description, or images are missing.
-- Run syntax checks for changed JavaScript and parse `package.json` before reporting success. Do not claim live scraping or local output audits were run unless they were actually executed against the user's local files.
+- Run syntax checks for changed JavaScript and parse `package.json` before reporting success. For a TechMatched image refresh, run `npm run audit:techmatched-images` first and use a small `--limit` for the first rescrape batch. Do not claim live scraping or local output audits were run unless they were actually executed against the user's local files.
 - Before changing a file, fetch/read its current contents and preserve unrelated work. Never overwrite a whole script with a simplified replacement to fix one issue.
 - Keep the primary implementation in `scraper/src/enrich_new_products.js`; avoid reintroducing the older generic `src/index.js` workflow as the solution for this dedicated enrichment task.
 - Keep documentation in sync with actual scripts and command names. If a command's behavior changes, update this file in the same work.
