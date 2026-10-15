@@ -75,14 +75,14 @@ function getLocalFiles(images) {
     return { reference: value, full };
   });
 }
-async function fetchBinary(url, referer) {
+async function fetchBinary(url, referer, redirects = 0) {
   const client = url.startsWith("https:") ? require("https") : require("http");
   return new Promise((resolve, reject) => {
     const req = client.get(url, { headers: { "User-Agent": "Mozilla/5.0 Chrome/124 Safari/537.36", Referer: referer || url, Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8" } }, res => {
       if ([301,302,303,307,308].includes(res.statusCode) && res.headers.location) {
         res.resume();
-        if (url.split("/").length > 12) return reject(new Error("Too many image redirects"));
-        return fetchBinary(new URL(res.headers.location, url).href, referer).then(resolve, reject);
+        if (redirects >= 5) return reject(new Error("Too many image redirects"));
+        return fetchBinary(new URL(res.headers.location, url).href, referer, redirects + 1).then(resolve, reject);
       }
       if (res.statusCode < 200 || res.statusCode >= 300) { res.resume(); return reject(new Error("HTTP " + res.statusCode)); }
       const chunks = [];
@@ -226,12 +226,12 @@ async function main() {
         for (const candidate of candidates) {
           const family = imageFamily(candidate.url);
           if (familySeen.has(family)) continue;
-          familySeen.add(family);
           try {
             const buffer = await fetchBinary(candidate.url, product.sourceUrl);
             if (buffer.length < 1200) continue;
             const dims = imageDims(buffer);
             if (dims && (dims.width < 180 || dims.height < 180)) continue;
+            familySeen.add(family);
             const digest = crypto.createHash("sha256").update(buffer).digest("hex");
             if (hashSeen.has(digest)) continue;
             hashSeen.add(digest);
