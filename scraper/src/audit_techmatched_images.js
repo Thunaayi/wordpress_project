@@ -177,20 +177,28 @@ async function visualHash(page, fullPath) {
     const ext = path.extname(fullPath).toLowerCase();
     const mime = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : ext === ".gif" ? "image/gif" : ext === ".avif" ? "image/avif" : "image/jpeg";
     const dataUrl = "data:" + mime + ";base64," + buffer.toString("base64");
+    // Difference hash: compare adjacent pixels across a 9x8 grayscale image.
+    // Unlike the prior average-threshold hash, this captures local gradients and
+    // reduces broad collisions between unrelated mostly-white product photos.
     return await page.evaluate(async source => {
       const img = new Image();
       img.src = source;
       await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; });
       const canvas = document.createElement("canvas");
-      canvas.width = 8; canvas.height = 8;
+      canvas.width = 9; canvas.height = 8;
       const ctx = canvas.getContext("2d", { willReadFrequently: true });
-      ctx.drawImage(img, 0, 0, 8, 8);
-      const pixels = ctx.getImageData(0, 0, 8, 8).data;
+      ctx.drawImage(img, 0, 0, 9, 8);
+      const pixels = ctx.getImageData(0, 0, 9, 8).data;
       const gray = [];
-      for (let i = 0; i < pixels.length; i += 4) gray.push(Math.round(0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2]));
-      const avg = gray.reduce((sum, n) => sum + n, 0) / gray.length;
+      for (let i = 0; i < pixels.length; i += 4) gray.push(0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2]);
       let bits = "";
-      for (const value of gray) bits += value >= avg ? "1" : "0";
+      for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+          const left = gray[y * 9 + x];
+          const right = gray[y * 9 + x + 1];
+          bits += left > right ? "1" : "0";
+        }
+      }
       return BigInt("0b" + bits).toString(16).padStart(16, "0");
     }, dataUrl);
   } catch { return ""; }
@@ -308,52 +316,64 @@ async function main() {
 
   // Report current post-rescrape state when requested, otherwise current saved state.
   const latest = loadResults().rows.filter(r => clean(r.source).toLowerCase().includes("techmatched") && r.sourceUrl && eligible.has(key(r)));
-  const reportRows = [];
+  const entries = [];
   const exact = new Map();
   const visual = new Map();
   const auditBrowser = await puppeteer.launch({ headless: true, args: ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--disable-gpu"] });
   const auditPage = await auditBrowser.newPage();
   for (const product of latest) {
     for (const item of getLocalFiles(product.images)) {
-      let hash = "", size = "", dimensions = "", visualHashValue = "", issue = "";
-      if (!fs.existsSync(item.full)) issue = "LOCAL_FILE_MISSING";
-      else {
+      const entry = { product, path: item.reference, hash: "", size: "", dimensions: "", visualHash: "", issue: "OK" };
+      if (!fs.existsSync(item.full)) {
+        entry.issue = "LOCAL_FILE_MISSING";
+      } else {
         const buf = fs.readFileSync(item.full);
-        hash = crypto.createHash("sha256").update(buf).digest("hex");
-        size = buf.length;
+        entry.hash = crypto.createHash("sha256").update(buf).digest("hex");
+        entry.size = buf.length;
         const d = imageDims(buf);
-        dimensions = d ? d.width + "x" + d.height : "unknown";
-        visualHashValue = await visualHash(auditPage, item.full);
-        const group = exact.get(hash) || [];
-        group.push({ product, path: item.reference, size, dimensions, visualHash: visualHashValue });
-        exact.set(hash, group);
-        if (visualHashValue) {
-          const vgroup = visual.get(visualHashValue) || [];
-          vgroup.push({ product, path: item.reference, size, dimensions, hash, visualHash: visualHashValue });
-          visual.set(visualHashValue, vgroup);
+        entry.dimensions = d ? d.width + "x" + d.height : "unknown";
+        entry.visualHash = await visualHash(auditPage, item.full);
+        const exactGroup = exact.get(entry.hash) || [];
+        exactGroup.push(entry);
+        exact.set(entry.hash, exactGroup);
+        if (entry.visualHash) {
+          const visualGroup = visual.get(entry.visualHash) || [];
+          visualGroup.push(entry);
+          visual.set(entry.visualHash, visualGroup);
         }
       }
-      reportRows.push([product.id || "", product.sku || "", product.name || "", product.sourceUrl || "", item.reference, issue || "OK", hash, size, dimensions, product.images?.length || 0, product.techmatchedImageRefresh?.refreshedAt || "", visualHashValue]);
+      entries.push(entry);
     }
   }
   await auditBrowser.close();
-  for (const [hash, group] of exact) {
-    if (group.length < 2) continue;
-    for (const entry of group) {
-      reportRows.push([entry.product.id || "", entry.product.sku || "", entry.product.name || "", entry.product.sourceUrl || "", entry.path, "EXACT_DUPLICATE_HASH shared by " + group.length + " references", hash, entry.size, entry.dimensions, entry.product.images?.length || 0, entry.product.techmatchedImageRefresh?.refreshedAt || "", entry.visualHash]);
+
+  // Keep exactly one CSV row per image reference. Duplicate findings annotate
+  // that row instead of appending extra duplicate rows that look like extra files.
+  for (const entry of entries) {
+    const flags = [];
+    if (entry.issue !== "OK") flags.push(entry.issue);
+    const exactGroup = entry.hash ? exact.get(entry.hash) || [] : [];
+    if (exactGroup.length > 1) {
+      const otherProducts = [...new Set(exactGroup.filter(other => other !== entry).map(other => String(other.product.id || other.product.sku || other.product.name)))];
+      flags.push("EXACT_DUPLICATE_HASH (" + exactGroup.length + " references; also used by " + otherProducts.join("; ") + ")");
     }
-  }
-  for (const [vhash, group] of visual) {
-    if (group.length < 2 || group.every(entry => exact.get(entry.hash)?.length > 1)) continue;
-    // Average-hash fingerprints resize images to the same 8x8 grayscale grid,
-    // helping flag identical-looking images saved at different resolutions.
-    for (const entry of group) {
-      reportRows.push([entry.product.id || "", entry.product.sku || "", entry.product.name || "", entry.product.sourceUrl || "", entry.path, "VISUAL_DUPLICATE_CANDIDATE (same 8x8 average hash; review manually)", entry.hash, entry.size, entry.dimensions, entry.product.images?.length || 0, entry.product.techmatchedImageRefresh?.refreshedAt || "", vhash]);
+    const visualGroup = entry.visualHash ? visual.get(entry.visualHash) || [] : [];
+    if (visualGroup.length > 1 && exactGroup.length < visualGroup.length) {
+      const otherProducts = [...new Set(visualGroup.filter(other => other !== entry).map(other => String(other.product.id || other.product.sku || other.product.name)))];
+      flags.push("VISUAL_HASH_CANDIDATE (dHash match; manually review; also used by " + otherProducts.join("; ") + ")");
     }
+    entry.issue = flags.length ? flags.join(" | ") : "OK";
   }
+
+  const reportRows = entries.map(entry => [
+    entry.product.id || "", entry.product.sku || "", entry.product.name || "",
+    entry.product.sourceUrl || "", entry.path, entry.issue, entry.hash,
+    entry.size, entry.dimensions, entry.product.images?.length || 0,
+    entry.product.techmatchedImageRefresh?.refreshedAt || "", entry.visualHash
+  ]);
   writeCsv(AUDIT_FILE, ["Product ID","SKU","Product name","TechMatched URL","Image file","Issue","SHA-256","Bytes","Dimensions","Image count","Last targeted rescrape","Visual hash"], reportRows);
   console.log("Audit report: " + AUDIT_FILE);
-  console.log("Products audited: " + latest.length + " | image references: " + reportRows.length);
+  console.log("Products audited: " + latest.length + " | unique image-reference rows: " + reportRows.length);
   console.log("Audit is read-only unless --rescrape was explicitly supplied. Old image files are never deleted.");
 }
 main().catch(error => { console.error(error.stack || error); process.exitCode = 1; });
