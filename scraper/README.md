@@ -85,7 +85,7 @@ The retry runner will not scrape a product if the original export has any popula
 - `output/search_audit.csv`: actual retailer/search-engine checks, query, candidate names/URLs/scores, close-match rejections, navigation errors, and final product-page title validation. The active source list excludes Techlad.pk while it is unavailable and includes MHK Tech Zone.
 - `output/product_quality_audit.csv`: quality check results for image-missing products.
 - `output/rescrape_queue.csv`: retry candidates and reasons.
-- `output/image_audit.csv`: local exact duplicate groups and hashes.\n- `output/techmatched_image_audit.csv`: TechMatched-only image inventory, dimensions, missing files, and cross-reference exact duplicate hashes.
+- `output/image_audit.csv`: local exact duplicate groups and hashes.\n- `output/techmatched_image_audit.csv`: TechMatched-only image inventory, dimensions, missing files, exact duplicate hashes, and visually similar/resized-image candidates.
 - `output/image_cleanup_plan.csv/json`: preview plan for duplicate quarantine.
 - `output/enriched_products.json`: checkpointed enrichment results.
 - `output/product_enrichment_status.csv`: filterable status summary.
