@@ -93,6 +93,20 @@ async function fetchBinary(url, referer, redirects = 0) {
     req.on("error", reject);
   });
 }
+
+const COLOR_TERMS = new Set(["black","white","red","blue","navy","lime","green","pink","purple","violet","yellow","orange","silver","gray","grey","beige","cream","brown","gold","snow","arctic","midnight"]);
+function colorTerms(value) {
+  const words = norm(value).split(" ").filter(Boolean);
+  return new Set(words.filter(word => COLOR_TERMS.has(word)).map(word => word === "grey" ? "gray" : word));
+}
+function hasConflictingColor(targetName, candidateText) {
+  const target = colorTerms(targetName);
+  const candidate = colorTerms(candidateText);
+  if (!target.size || !candidate.size) return false;
+  return [...target].some(color => !candidate.has(color)) &&
+    [...candidate].some(color => !target.has(color));
+}
+
 function slug(v) { return norm(v).replace(/\s+/g, "-").slice(0, 100) || "product"; }
 function ext(url) {
   try { const m = new URL(url).pathname.match(/\.(jpe?g|png|webp|avif|gif)$/i); return m ? m[0].toLowerCase() : ".jpg"; } catch { return ".jpg"; }
@@ -251,6 +265,21 @@ async function main() {
     productRows.push({ product, details });
   }
 
+  // Hash currently assigned TechMatched images. The backup quarantine is
+  // intentionally excluded; only active product references participate.
+  const existingHashOwners = new Map();
+  for (const owner of rows.filter(r => clean(r.source).toLowerCase().includes("techmatched"))) {
+    for (const item of getLocalFiles(owner.images)) {
+      if (!fs.existsSync(item.full)) continue;
+      try {
+        const digest = crypto.createHash("sha256").update(fs.readFileSync(item.full)).digest("hex");
+        const owners = existingHashOwners.get(digest) || [];
+        if (!owners.some(existing => key(existing) === key(owner))) owners.push(owner);
+        existingHashOwners.set(digest, owners);
+      } catch {}
+    }
+  }
+
   if (RESCRAPE) {
     const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--disable-gpu"] });
     const page = await browser.newPage();
@@ -266,6 +295,11 @@ async function main() {
         for (const candidate of candidates) {
           const family = imageFamily(candidate.url);
           if (familySeen.has(family)) continue;
+          const candidateLabel = [candidate.alt, candidate.url].join(" ");
+          if (hasConflictingColor(product.name, candidateLabel)) {
+            console.log("  color-variant image rejected: " + candidate.url);
+            continue;
+          }
           try {
             const buffer = await fetchBinary(candidate.url, product.sourceUrl);
             if (buffer.length < 1200) continue;
@@ -274,6 +308,11 @@ async function main() {
             familySeen.add(family);
             const digest = crypto.createHash("sha256").update(buffer).digest("hex");
             if (hashSeen.has(digest)) continue;
+            const otherOwners = (existingHashOwners.get(digest) || []).filter(owner => key(owner) !== key(product));
+            if (otherOwners.length) {
+              console.log("  cross-product duplicate rejected: " + candidate.url + " (already assigned to " + otherOwners.map(owner => (owner.id || owner.sku || "") + " " + owner.name).join("; ") + ")");
+              continue;
+            }
             hashSeen.add(digest);
             const filename = slug(product.name) + "-" + slug(product.id || product.sku || "product") + "-tm-" + saved.length + ext(candidate.url);
             const destination = path.join(IMAGE_DIR, filename);
