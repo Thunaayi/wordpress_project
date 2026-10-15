@@ -50,9 +50,11 @@ The source of truth for the eligibility rule and project constraints is the repo
 1. Run a small enrichment batch with `ENRICH_LIMIT` set.
 2. Inspect `output/product_enrichment_status.csv`, `output/enriched_products.csv`, and the downloaded images.
 3. Run `npm run audit` to audit exact duplicate local image files and product quality.
-4. Inspect `output/product_quality_audit.csv`, `output/image_audit.csv`, and `output/rescrape_queue.csv`.
-5. If a retry is warranted, set a small limit and run `npm run rescrape:audit`.
-6. Re-run `npm run audit` after the retry to refresh reports.
+4. For TechMatched-specific image issues, run `npm run audit:techmatched-images`; inspect `output/techmatched_image_audit.csv` before any refresh.
+5. If TechMatched images are poor, run `npm run rescrape:techmatched-images -- --limit=5` first. It refreshes only products whose saved match source is TechMatched and which are still eligible under the original export's empty-Images rule. Old files and previous image references are retained in the JSON backup field.
+6. Inspect `output/product_quality_audit.csv`, `output/image_audit.csv`, `output/techmatched_image_audit.csv`, and `output/rescrape_queue.csv`.
+7. If a general retry is warranted, set a small limit and run `npm run rescrape:audit`.
+8. Re-run the audits after any retry to refresh reports.
 
 ## Commands
 
@@ -62,7 +64,7 @@ The source of truth for the eligibility rule and project constraints is the repo
 | `npm run enrich:fields` | Retry missing description/spec fields from a saved matched source URL. |
 | `npm run audit` | Run both local image audit and product quality audit; no network scraping or file cleanup. |
 | `npm run audit:images` | Hash local images and report exact byte-for-byte duplicates. |
-| `npm run audit:products` | Audit source-name match, images, description, and specs for original image-missing products. |
+| `npm run audit:products` | Audit source-name match, images, description, and specs for original image-missing products. |\n| `npm run audit:techmatched-images` | Read-only audit of saved TechMatched image references, missing files, dimensions, and exact duplicate hashes. |\n| `npm run rescrape:techmatched-images -- --limit=5` | Targeted TechMatched-only image refresh from saved source URLs. Original inventory eligibility is enforced; previous files are retained. |
 | `npm run rescrape:audit` | Re-run the matcher for rows in `output/rescrape_queue.csv`; original inventory eligibility is rechecked. |
 | `npm run retry:unfound` | Retry saved `NO_MATCH` products only on configured retailers not previously checked for that product. |
 | `npm run cleanup:images` | Preview an exact-duplicate cleanup plan. Preview-only by default. |
@@ -83,7 +85,7 @@ The retry runner will not scrape a product if the original export has any popula
 - `output/search_audit.csv`: actual retailer/search-engine checks, query, candidate names/URLs/scores, close-match rejections, navigation errors, and final product-page title validation. The active source list excludes Techlad.pk while it is unavailable and includes MHK Tech Zone.
 - `output/product_quality_audit.csv`: quality check results for image-missing products.
 - `output/rescrape_queue.csv`: retry candidates and reasons.
-- `output/image_audit.csv`: local exact duplicate groups and hashes.
+- `output/image_audit.csv`: local exact duplicate groups and hashes.\n- `output/techmatched_image_audit.csv`: TechMatched-only image inventory, dimensions, missing files, and cross-reference exact duplicate hashes.
 - `output/image_cleanup_plan.csv/json`: preview plan for duplicate quarantine.
 - `output/enriched_products.json`: checkpointed enrichment results.
 - `output/product_enrichment_status.csv`: filterable status summary.
