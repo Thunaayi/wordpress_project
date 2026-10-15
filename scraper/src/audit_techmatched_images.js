@@ -269,7 +269,8 @@ async function main() {
   // Hash currently assigned TechMatched images. The backup quarantine is
   // intentionally excluded; only active product references participate.
   const existingHashOwners = new Map();
-  for (const owner of rows.filter(r => clean(r.source).toLowerCase().includes("techmatched"))) {
+  const selectedKeys = new Set(selected.map(key));
+  for (const owner of rows.filter(r => clean(r.source).toLowerCase().includes("techmatched") && !selectedKeys.has(key(r)))) {
     for (const item of getLocalFiles(owner.images)) {
       if (!fs.existsSync(item.full)) continue;
       try {
