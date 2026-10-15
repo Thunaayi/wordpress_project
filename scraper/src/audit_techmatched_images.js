@@ -300,7 +300,8 @@ async function main() {
       if (Array.isArray(parsed)) fs.writeFileSync(RESULTS_FILE, JSON.stringify(outputRows, null, 2));
       else fs.writeFileSync(RESULTS_FILE, JSON.stringify({ ...parsed, generatedAt: new Date().toISOString(), total: outputRows.length, results: outputRows }, null, 2));
       refreshDerivedOutputs(outputRows);
-      console.log("Updated enriched_products.json for " + refreshed.size + " product(s). Other product fields/results were preserved.");\n      console.log("Derived status/import-shaped CSV outputs were refreshed from the full saved result set.");
+      console.log("Updated enriched_products.json for " + refreshed.size + " product(s). Other product fields/results were preserved.");
+      console.log("Derived status/import-shaped CSV outputs were refreshed from the full saved result set.");
       console.log("Run npm run audit:techmatched-images to refresh the audit after reviewing the new images.");
     }
   }
