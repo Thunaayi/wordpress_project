@@ -171,6 +171,38 @@ function refreshDerivedOutputs(rows) {
   }
 }
 
+async function visualHash(page, fullPath) {
+  try {
+    const buffer = fs.readFileSync(fullPath);
+    const ext = path.extname(fullPath).toLowerCase();
+    const mime = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : ext === ".gif" ? "image/gif" : ext === ".avif" ? "image/avif" : "image/jpeg";
+    const dataUrl = "data:" + mime + ";base64," + buffer.toString("base64");
+    return await page.evaluate(async source => {
+      const img = new Image();
+      img.src = source;
+      await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; });
+      const canvas = document.createElement("canvas");
+      canvas.width = 8; canvas.height = 8;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, 8, 8);
+      const pixels = ctx.getImageData(0, 0, 8, 8).data;
+      const gray = [];
+      for (let i = 0; i < pixels.length; i += 4) gray.push(Math.round(0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2]));
+      const avg = gray.reduce((sum, n) => sum + n, 0) / gray.length;
+      let bits = "";
+      for (const value of gray) bits += value >= avg ? "1" : "0";
+      return BigInt("0b" + bits).toString(16).padStart(16, "0");
+    }, dataUrl);
+  } catch { return ""; }
+}
+function hammingDistance(a, b) {
+  if (!a || !b || a.length !== b.length) return 64;
+  let x = BigInt("0x" + a) ^ BigInt("0x" + b);
+  let count = 0;
+  while (x) { count += Number(x & 1n); x >>= 1n; }
+  return count;
+}
+
 async function main() {
   const { parsed, rows } = loadResults();
   const eligible = loadEligibleIds();
@@ -277,9 +309,12 @@ async function main() {
   const latest = loadResults().rows.filter(r => clean(r.source).toLowerCase().includes("techmatched") && r.sourceUrl && eligible.has(key(r)));
   const reportRows = [];
   const exact = new Map();
+  const visual = new Map();
+  const auditBrowser = await puppeteer.launch({ headless: true, args: ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--disable-gpu"] });
+  const auditPage = await auditBrowser.newPage();
   for (const product of latest) {
     for (const item of getLocalFiles(product.images)) {
-      let hash = "", size = "", dimensions = "", issue = "";
+      let hash = "", size = "", dimensions = "", visualHashValue = "", issue = "";
       if (!fs.existsSync(item.full)) issue = "LOCAL_FILE_MISSING";
       else {
         const buf = fs.readFileSync(item.full);
@@ -287,20 +322,35 @@ async function main() {
         size = buf.length;
         const d = imageDims(buf);
         dimensions = d ? d.width + "x" + d.height : "unknown";
+        visualHashValue = await visualHash(auditPage, item.full);
         const group = exact.get(hash) || [];
-        group.push({ product, path: item.reference, size, dimensions });
+        group.push({ product, path: item.reference, size, dimensions, visualHash: visualHashValue });
         exact.set(hash, group);
+        if (visualHashValue) {
+          const vgroup = visual.get(visualHashValue) || [];
+          vgroup.push({ product, path: item.reference, size, dimensions, hash, visualHash: visualHashValue });
+          visual.set(visualHashValue, vgroup);
+        }
       }
-      reportRows.push([product.id || "", product.sku || "", product.name || "", product.sourceUrl || "", item.reference, issue || "OK", hash, size, dimensions, product.images?.length || 0, product.techmatchedImageRefresh?.refreshedAt || ""]);
+      reportRows.push([product.id || "", product.sku || "", product.name || "", product.sourceUrl || "", item.reference, issue || "OK", hash, size, dimensions, product.images?.length || 0, product.techmatchedImageRefresh?.refreshedAt || "", visualHashValue]);
     }
   }
+  await auditBrowser.close();
   for (const [hash, group] of exact) {
     if (group.length < 2) continue;
     for (const entry of group) {
-      reportRows.push([entry.product.id || "", entry.product.sku || "", entry.product.name || "", entry.product.sourceUrl || "", entry.path, "EXACT_DUPLICATE_HASH shared by " + group.length + " references", hash, entry.size, entry.dimensions, entry.product.images?.length || 0, entry.product.techmatchedImageRefresh?.refreshedAt || ""]);
+      reportRows.push([entry.product.id || "", entry.product.sku || "", entry.product.name || "", entry.product.sourceUrl || "", entry.path, "EXACT_DUPLICATE_HASH shared by " + group.length + " references", hash, entry.size, entry.dimensions, entry.product.images?.length || 0, entry.product.techmatchedImageRefresh?.refreshedAt || "", entry.visualHash]);
     }
   }
-  writeCsv(AUDIT_FILE, ["Product ID","SKU","Product name","TechMatched URL","Image file","Issue","SHA-256","Bytes","Dimensions","Image count","Last targeted rescrape"], reportRows);
+  for (const [vhash, group] of visual) {
+    if (group.length < 2 || group.every(entry => exact.get(entry.hash)?.length > 1)) continue;
+    // Average-hash fingerprints resize images to the same 8x8 grayscale grid,
+    // helping flag identical-looking images saved at different resolutions.
+    for (const entry of group) {
+      reportRows.push([entry.product.id || "", entry.product.sku || "", entry.product.name || "", entry.product.sourceUrl || "", entry.path, "VISUAL_DUPLICATE_CANDIDATE (same 8x8 average hash; review manually)", entry.hash, entry.size, entry.dimensions, entry.product.images?.length || 0, entry.product.techmatchedImageRefresh?.refreshedAt || "", vhash]);
+    }
+  }
+  writeCsv(AUDIT_FILE, ["Product ID","SKU","Product name","TechMatched URL","Image file","Issue","SHA-256","Bytes","Dimensions","Image count","Last targeted rescrape","Visual hash"], reportRows);
   console.log("Audit report: " + AUDIT_FILE);
   console.log("Products audited: " + latest.length + " | image references: " + reportRows.length);
   console.log("Audit is read-only unless --rescrape was explicitly supplied. Old image files are never deleted.");
