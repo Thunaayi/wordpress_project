@@ -102,3 +102,10 @@ Never commit the original product export, generated product reports, or download
 ### TechMatched duplicate-image safeguards
 
 The targeted rescraper compares each downloaded image's SHA-256 against active TechMatched product image references and against images accepted earlier in the same run. It rejects exact-byte reuse across different products and conservatively rejects a clear single-color mismatch when the candidate alt text or URL names a different single color. The `.duplicate-quarantine` directory is backup-only and is not treated as active ownership or cleaned by this rescraper. These checks cannot identify every visually incorrect image; review `output/techmatched_image_audit.csv` after a small test batch.
+
+
+## Manual product-image review and repair
+
+Run `npm run images:review` to create `output/image_review_queue.csv`. Open it in a spreadsheet and inspect each product's images. Set `Action` to `COVER` for the one correct primary image, `REMOVE` for a wrong/duplicate reference, or `KEEP` for other valid images. Save the CSV, then run `npm run images:review -- --apply`. The tool backs up `enriched_products.json`, changes only image references/order, and never renames or deletes files. A removed image is unlinked from that product only. Rebuild derived WooCommerce CSVs from the updated JSON before import.
+
+The review queue flags exact-byte duplicates, missing local files, likely detail/port images, and filenames suggesting background/color concerns. Filename heuristics cannot determine the actual pictured color or reliably distinguish white-background from transparent-background images; inspect thumbnails manually. The TechMatched rescraper ranks obvious port/rear-I/O details below likely cover candidates, but ambiguous candidates still need review. Always inspect the first few products after rescraping.
