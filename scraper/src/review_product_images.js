@@ -52,7 +52,7 @@ function scan(rows) {
       if (productColors.size === 1 && fileColors.size === 1 && [...productColors][0] !== [...fileColors][0]) issues.push("FILENAME_COLOR_CONFLICT");
       if (/(port|rear|back|connector|io|shield|detail|close up)/i.test(norm(path.basename(clean(ref))))) issues.push("LIKELY_DETAIL_NOT_COVER");
       if (duplicateOwners.length > 1) issues.push("EXACT_DUPLICATE_BYTES");
-      if (/(transparent|no[-_ ]?background|cutout|isolated|white[-_ ]?bg|white[-_ ]?background|transparent[-_ ]?bg)/i.test(norm(path.basename(clean(ref)))) issues.push("BACKGROUND_STYLE_REVIEW");
+      if (/(transparent|no background|cutout|isolated|white bg|white background)/i.test(norm(path.basename(clean(ref))))) issues.push("BACKGROUND_STYLE_REVIEW");
       if (!issues.length) issues.push("REVIEW_VISUALLY");
       report.push([product.id || "",product.sku || "",product.name || "",index+1,ref,hash,issues.join(";"),"", "Use KEEP, COVER, or REMOVE. REMOVE only unlinks the reference; it never deletes the file."]);
     });
