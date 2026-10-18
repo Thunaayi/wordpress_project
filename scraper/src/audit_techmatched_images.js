@@ -165,7 +165,15 @@ async function extractTechMatchedImages(page, url) {
       if (/\.(jpe?g|png|webp|avif|gif)(?:\?|$)/i.test(a.href)) add(a.href, 90, a.title || "");
     });
     const seen = new Set();
-    return candidates.sort((a,b) => b.rank-a.rank).filter(item => {
+    const detailOnly = /(rear[-_ ]?i\/?o|i\/?o[-_ ]?(shield|panel|ports?)|back[-_ ]?(panel|ports?)|motherboard[-_ ]?(ports?|rear)|ports?[-_ ]?(close[-_ ]?up|detail|panel)|connector[-_ ]?(detail|close[-_ ]?up)|back[-_ ]?of[-_ ]?(the[-_ ]?)?(board|motherboard)|port[-_ ]?layout|usb[-_ ]?ports?)/i;
+    const heroHints = /(main[-_ ]?image|featured|front[-_ ]?view|product[-_ ]?image|hero|angle[-_ ]?view|front[-_ ]?panel)/i;
+    return candidates.map(item => {
+      const label = item.alt + " " + item.url;
+      let score = item.rank;
+      if (detailOnly.test(label)) score -= 140;
+      if (heroHints.test(label)) score += 18;
+      return { ...item, rank: score, role: detailOnly.test(label) ? "DETAIL_NOT_COVER" : heroHints.test(label) ? "COVER_CANDIDATE" : "UNCLASSIFIED" };
+    }).sort((a,b) => b.rank-a.rank).filter(item => {
       if (blocked.test(item.url) || seen.has(item.url)) return false;
       seen.add(item.url);
       return true;
@@ -294,6 +302,7 @@ async function main() {
         const familySeen = new Set();
         const hashSeen = new Set();
         const saved = [];
+        let coverSaved = false;
         for (const candidate of candidates) {
           const family = imageFamily(candidate.url);
           if (familySeen.has(family)) continue;
@@ -316,11 +325,19 @@ async function main() {
               continue;
             }
             hashSeen.add(digest);
+            const isDetail = candidate.role === "DETAIL_NOT_COVER";
             const filename = slug(product.name) + "-" + slug(product.id || product.sku || "product") + "-tm-" + saved.length + ext(candidate.url);
             const destination = path.join(IMAGE_DIR, filename);
             fs.mkdirSync(IMAGE_DIR, { recursive: true });
             fs.writeFileSync(destination, buffer);
-            saved.push("data/images/" + filename);
+            // Keep the likely hero image first; explicit ports/rear-I/O details
+            // remain available but are not allowed to become the cover.
+            if (!isDetail && !coverSaved) {
+              saved.unshift("data/images/" + filename);
+              coverSaved = true;
+            } else {
+              saved.push("data/images/" + filename);
+            }
             const currentOwners = existingHashOwners.get(digest) || [];
             if (!currentOwners.some(owner => key(owner) === key(product))) currentOwners.push(product);
             existingHashOwners.set(digest, currentOwners);
