@@ -24,20 +24,6 @@ function readRows() {
 }
 function imageText(ref) { return norm(path.basename(clean(ref))); }
 function colors(s) { return new Set(norm(s).split(" ").filter(w => COLOR.has(w)).map(w => w === "grey" ? "gray" : w)); }
-function issueFor(product, ref, hashOwners) {
-  const issues = [];
-  const p = localPath(ref);
-  const name = imageText(ref);
-  if (!fs.existsSync(p)) issues.push("MISSING_FILE");
-  const colorsProduct = colors(product.name);
-  const colorsFile = colors(name);
-  if (colorsProduct.size === 1 && colorsFile.size === 1 && [...colorsProduct][0] !== [...colorsFile][0]) issues.push("FILENAME_COLOR_CONFLICT");
-  if (/(rear[-_ ]?i.?o|i.?o[-_ ]?(shield|panel|ports?)|back[-_ ]?(panel|ports?)|motherboard[-_ ]?(ports?|rear)|ports?[-_ ]?(close[-_ ]?up|detail|panel)|connector[-_ ]?(detail|close[-_ ]?up)|port[-_ ]?layout|usb[-_ ]?ports?)/i.test(name)) issues.push("LIKELY_DETAIL_NOT_COVER");
-  if (/(transparent|no[-_ ]?background|cutout|isolated|white[-_ ]?bg|white[-_ ]?background|transparent[-_ ]?bg)/i.test(name)) issues.push("BACKGROUND_STYLE_REVIEW");
-  const owners = hashOwners.get(ref) || [];
-  if (owners.length > 1) issues.push("DUPLICATE_REFERENCE");
-  return issues.length ? issues.join(";") : "REVIEW_VISUALLY";
-}
 function scan(rows) {
   const hashOwners = new Map();
   for (const product of rows) for (const ref of (Array.isArray(product.images) ? product.images : [])) {
@@ -64,7 +50,7 @@ function scan(rows) {
       const productColors = colors(product.name);
       const fileColors = colors(path.basename(clean(ref)));
       if (productColors.size === 1 && fileColors.size === 1 && [...productColors][0] !== [...fileColors][0]) issues.push("FILENAME_COLOR_CONFLICT");
-      if (/(rear[-_ ]?i.?o|i.?o[-_ ]?(shield|panel|ports?)|back[-_ ]?(panel|ports?)|motherboard[-_ ]?(ports?|rear)|ports?[-_ ]?(close[-_ ]?up|detail|panel)|connector[-_ ]?(detail|close[-_ ]?up)|port[-_ ]?layout|usb[-_ ]?ports?)/i.test(norm(path.basename(clean(ref)))) issues.push("LIKELY_DETAIL_NOT_COVER");
+      if (/(rear|back|port|connector|motherboard|usb|io|i-o)/i.test(norm(path.basename(clean(ref))) ) && /(port|io|i-o|rear|back|connector|detail|close up|shield)/i.test(norm(path.basename(clean(ref)))) issues.push("LIKELY_DETAIL_NOT_COVER");
       if (duplicateOwners.length > 1) issues.push("EXACT_DUPLICATE_BYTES");
       if (/(transparent|no[-_ ]?background|cutout|isolated|white[-_ ]?bg|white[-_ ]?background|transparent[-_ ]?bg)/i.test(norm(path.basename(clean(ref)))) issues.push("BACKGROUND_STYLE_REVIEW");
       if (!issues.length) issues.push("REVIEW_VISUALLY");
