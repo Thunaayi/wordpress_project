@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const { parse } = require("csv-parse/sync");
 const puppeteer = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+const { variantConflict } = require("./utils/variantGuard");
 
 puppeteer.use(StealthPlugin());
 
@@ -119,6 +120,10 @@ function scoreMatch(target, candidate) {
   const b = tokens(candidate);
   if (!a.size || !b.size) return 0;
 
+  // Different color, motherboard suffix, WIFI or PLUS edition and so on
+  // are different products no matter how much of the name lines up.
+  if (variantConflict(target, candidate)) return 0;
+
   const capA = extractCapacity(target);
   const capB = extractCapacity(candidate);
   if (capA && capB && capA !== capB) return 0;
@@ -149,6 +154,33 @@ function scoreMatch(target, candidate) {
   const containment = na === nb ? 1 : (na.includes(nb) || nb.includes(na) ? 0.98 : 0);
 
   return Math.max(containment, criticalCoverage * 0.55 + jaccard * 0.25 + modelCoverage * 0.20);
+}
+
+// Two products with different names that resolved to one competitor page are
+// a variant mix-up until proven otherwise (a Black and a White version both
+// getting the same photos). Both are moved to PARTIAL so they are not written
+// to the import CSV and get retried on the next run. Products whose names are
+// identical are left alone, since those are real duplicate listings.
+function flagSharedSourcePages(records) {
+  const byUrl = new Map();
+  for (const r of records) {
+    if (!["MATCHED", "PARTIAL"].includes(r.status) || !r.sourceUrl) continue;
+    if (!byUrl.has(r.sourceUrl)) byUrl.set(r.sourceUrl, []);
+    byUrl.get(r.sourceUrl).push(r);
+  }
+  let flagged = 0;
+  for (const [url, group] of byUrl) {
+    const names = new Set(group.map(r => normalize(r.name)));
+    if (group.length < 2 || names.size < 2) continue;
+    for (const r of group) {
+      if (r.status !== "MATCHED") continue;
+      r.status = "PARTIAL";
+      r.reason = "Shared source page: " + group.filter(o => o !== r).map(o => o.id || o.name).join(", ") +
+        " also matched " + url + ". Possible variant mix-up, review before import";
+      flagged++;
+    }
+  }
+  if (flagged) console.log("Flagged " + flagged + " products that share a source page with a differently named product");
 }
 
 function queryVariants(name) {
@@ -462,13 +494,33 @@ async function extractProductOnce(page, url) {
     );
 
     if (!Object.keys(specs).length) {
+      // Only read lists inside the product's own content area. A page wide
+      // search picks up menus, footers and sidebars as "specs".
+      const CHROME = "nav, header, footer, aside, [role='navigation'], [role='banner'], [role='contentinfo'], " +
+        ".menu, .nav, .navbar, .navigation, .breadcrumb, .breadcrumbs, .footer, .header, .sidebar, .widget, " +
+        ".related, .upsells, .cross-sells, .product-categories, .mega-menu, .dropdown, .social, .tabs-nav, ul.tabs, .wc-tabs, .woocommerce-tabs ul.tabs";
+      const CONTENT_ROOTS = [
+        ".woocommerce-product-details__short-description", "#tab-description", ".woocommerce-Tabs-panel--description",
+        ".product-description", ".product_description", ".product-short-description", ".short-description",
+        "[itemprop='description']", ".product-details", ".product-info", ".entry-summary", ".product-summary", ".summary"
+      ];
+      const roots = CONTENT_ROOTS.flatMap(sel => [...document.querySelectorAll(sel)]);
+      const seenLi = new Set();
       let featureIndex = 1;
-      document.querySelectorAll("ul li, ol li").forEach(li => {
-        const value = text(li);
-        if (value.length >= 12 && value.length <= 500 &&
-            !/^(add to cart|buy now|in stock|out of stock|reviews?)/i.test(value)) {
-          addSpec("Feature " + featureIndex++, value);
-        }
+      roots.forEach(root => {
+        root.querySelectorAll("ul li, ol li").forEach(li => {
+          if (seenLi.has(li) || li.closest(CHROME)) return;
+          seenLi.add(li);
+          const value = text(li);
+          // Real features are sentences or phrases. Short link-only items and
+          // items that are just a link are menu entries.
+          const onlyLink = li.children.length === 1 && li.children[0].tagName === "A" &&
+            text(li.children[0]) === value;
+          if (value.length >= 12 && value.length <= 500 && !onlyLink &&
+              !/^(add to cart|buy now|in stock|out of stock|reviews?|share|home|shop|my account|login|register|contact|about|privacy|terms|returns?|shipping|faq)/i.test(value)) {
+            addSpec("Feature " + featureIndex++, value);
+          }
+        });
       });
     }
 
@@ -1137,6 +1189,7 @@ async function main() {
   await browser.close();
   const merged = new Map(previous);
   for (const r of results) merged.set(productKey(r), r);
+  flagSharedSourcePages([...merged.values()]);
   saveOutputs([...merged.values()], inventory);
 
   const counts = results.reduce((a, r) => {
