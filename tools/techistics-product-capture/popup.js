@@ -6,7 +6,8 @@ function safeName(value) {
 }
 function status(message) { $("status").textContent = message; }
 function extractProduct() {
-  const txt = el => (el?.innerText || el?.textContent || "").replace(/\s+/g, " ").trim();
+  const cleanText = value => String(value ?? "").replace(/\s+/g, " ").trim();
+  const txt = el => cleanText(el?.innerText || el?.textContent || "");
   const visible = el => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
   const abs = value => { try { return new URL(value, location.href).href; } catch { return ""; } };
   const meta = selector => document.querySelector(selector)?.content || "";
@@ -102,14 +103,14 @@ function extractProduct() {
       if (/logo|avatar|icon|payment|banner|sprite/i.test(description)) continue;
       if (img.naturalWidth && img.naturalWidth < 180) continue;
       if (img.closest(".related,.upsells,.cross-sells,.recommended-products,.related.products,.upsells.products")) continue;
-      imageCandidates.push({url, alt:clean(img.alt), width:img.naturalWidth||0, height:img.naturalHeight||0});
+      imageCandidates.push({url, alt:cleanText(img.alt), width:img.naturalWidth||0, height:img.naturalHeight||0});
     }
   }
   const canonical = document.querySelector('link[rel="canonical"]')?.href || location.href;
   return {
     sourceUrl: canonical, scannedAt: new Date().toISOString(), name,
-    brand: clean(brand), sku, price: clean(price),
-    currency: clean(offers?.priceCurrency || meta('meta[property="product:price:currency"]') || "PKR"),
+    brand: cleanText(brand), sku: cleanText(sku), price: cleanText(price),
+    currency: cleanText(offers?.priceCurrency || meta('meta[property="product:price:currency"]') || "PKR"),
     description, specs, images: imageCandidates
   };
 }
@@ -142,9 +143,10 @@ async function scan() {
   $("scan").disabled = true; status("Scanning the current tab…");
   try {
     const [tab] = await chrome.tabs.query({active:true,currentWindow:true});
+    if (!tab?.id || !tab.url || !/^https?:/i.test(tab.url)) throw new Error("Open a normal http/https product page first. Extensions cannot scan chrome:// pages, the Chrome Web Store, or local files.");
     const result = await chrome.scripting.executeScript({target:{tabId:tab.id},func:extractProduct});
     capture = result?.[0]?.result;
-    if (!capture) throw new Error("No data returned. Try reloading the product page.");
+    if (!capture || typeof capture !== "object") throw new Error("The page scan returned no product data. Check chrome://extensions for an error, then reload the product tab and try again.");
     $("name").value=capture.name||""; $("brand").value=capture.brand||"";
     $("sku").value=capture.sku||""; $("price").value=capture.price||"";
     $("currency").value=capture.currency||"PKR"; $("description").value=capture.description||"";
