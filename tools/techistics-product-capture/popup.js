@@ -92,7 +92,7 @@ function extractProduct() {
   if (gallery) {
     for (const img of gallery.querySelectorAll("img")) {
       if (!visible(img)) continue;
-      const url = abs(img.dataset.large_image || img.dataset.src || img.dataset-lazy-src || img.currentSrc || img.src || img.getAttribute("data-lazy-src"));
+      const url = abs(img.dataset.large_image || img.dataset.src || img.dataset.lazySrc || img.currentSrc || img.src || img.getAttribute("data-lazy-src"));
       if (!url || !/^https?:/.test(url)) continue;
       const parsed = new URL(url);
       const identity = parsed.origin + parsed.pathname;
