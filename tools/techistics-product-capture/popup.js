@@ -45,7 +45,11 @@ function extractImages() {
   }
   for (const link of document.querySelectorAll("a[href]")) {
     const img = link.querySelector("img");
-    if (img) add(link.href, img.alt, img.naturalWidth, img.naturalHeight, "image link");
+    if (img) {
+      let path = "";
+      try { path = new URL(link.href).pathname; } catch {}
+      if (/\.(?:jpe?g|png|webp|gif|avif|bmp|svg)$/i.test(path)) add(link.href, img.alt, img.naturalWidth, img.naturalHeight, "image link");
+    }
   }
   for (const meta of document.querySelectorAll('meta[property="og:image"], meta[name="twitter:image"], meta[property="twitter:image"]')) {
     add(meta.content, "Page preview image", 0, 0, "page metadata");
@@ -81,6 +85,7 @@ async function scan() {
 }
 function renderImages() {
   const list = $("images");
+  $("count").textContent = images.length + " image URL" + (images.length === 1 ? "" : "s");
   list.replaceChildren();
   images.forEach((item,index)=>{
     const row=document.createElement("label");
