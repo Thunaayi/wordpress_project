@@ -1,18 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Techistics Product Capture",
-  "version": "2.1.0",
-  "description": "Review and capture product details and gallery images into one ZIP per product.",
-  "permissions": [
-    "activeTab",
-    "downloads",
-    "scripting"
-  ],
-  "host_permissions": [
-    "<all_urls>"
-  ],
-  "action": {
-    "default_title": "Capture product",
-    "default_popup": "popup.html"
-  }
+  "name": "Product Image Saver",
+  "version": "3.0.0",
+  "description": "Find images on webpages and download selected images with clean sequential filenames.",
+  "permissions": ["activeTab", "downloads", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "action": {"default_title": "Save page images", "default_popup": "popup.html"}
 }
