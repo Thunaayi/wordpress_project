@@ -77,15 +77,52 @@ function extractProduct() {
     const dts = [...root.querySelectorAll("dt")], dds = [...root.querySelectorAll("dd")];
     dts.forEach((dt, i) => addSpec(txt(dt), txt(dds[i])));
   }
+  // Czone's Webx product pages use a different layout from WooCommerce.
+  // Find the specifications section by its visible heading and parse nearby tables/key-value rows.
+  if (/^(www\.)?czone\.com\.pk$/i.test(location.hostname)) {
+    const headingNodes = [...document.querySelectorAll("h1,h2,h3,h4,h5,strong,b,button,a,div,span")]
+      .filter(el => el.children.length < 5 && /^(product specifications|specifications|product spec|technical specifications)$/i.test(txt(el)));
+    for (const heading of headingNodes) {
+      let section = heading.parentElement;
+      for (let depth = 0; section && depth < 4; depth++, section = section.parentElement) {
+        for (const row of section.querySelectorAll("tr")) {
+          const cells = [...row.querySelectorAll("th,td")].map(txt).filter(Boolean);
+          if (cells.length >= 2) addSpec(cells[0], cells.slice(1).join(" "));
+        }
+        for (const row of section.querySelectorAll("[class*=spec], [class*=Spec], li, .row")) {
+          const parts = [...row.querySelectorAll("th,td,dt,dd,label,strong,b,span,p,div")]
+            .filter(el => el.children.length === 0).map(txt).filter(Boolean);
+          if (parts.length >= 2) addSpec(parts[0], parts.slice(1).join(" "));
+        }
+        const dts = [...section.querySelectorAll("dt")], dds = [...section.querySelectorAll("dd")];
+        dts.forEach((dt, i) => addSpec(txt(dt), txt(dds[i])));
+      }
+    }
+    // Some Czone products expose specifications as labelled text rather than a table.
+    if (!specs.length) {
+      const specRoot = document.querySelector("#product-specifications, #specifications, .product-specifications, .specification, .specifications, #tab-specifications");
+      if (specRoot) {
+        for (const row of specRoot.querySelectorAll("tr,li,p,.row,[class*=spec]")) {
+          const text = txt(row);
+          const match = text.match(/^([^:|]{2,100})\s*[:|]\s*(.{1,500})$/);
+          if (match) addSpec(match[1], match[2]);
+        }
+      }
+    }
+  }
   // Product-only gallery; if absent, use images inside the primary product content,
   // never the whole document.
   const gallerySelectors = [
     ".woocommerce-product-gallery", ".product-gallery", ".product-images",
-    ".woocommerce-product-gallery__wrapper", "[data-product-gallery]"
+    ".woocommerce-product-gallery__wrapper", "[data-product-gallery]",
+    "#product-image", "#product-image-container", "#product-images", ".product-image",
+    ".product-image-container", ".product-image-gallery", ".product-gallery-container",
+    "#zoom_01", ".product-img", ".product-main-image", "#main-image", ".big-image"
   ];
   let gallery = gallerySelectors.flatMap(selector => [...document.querySelectorAll(selector)]).find(visible);
   if (!gallery) gallery = document.querySelector("main .product .images") ||
     document.querySelector("main .product .product-images") ||
+    document.querySelector("#product-details, .product-details, .product-detail, #product-detail, .product-info, #product-info, #content .product, #content") ||
     document.querySelector("main .product") ||
     document.querySelector("[itemtype*='Product']");
   const imageCandidates = [];
@@ -93,7 +130,7 @@ function extractProduct() {
   if (gallery) {
     for (const img of gallery.querySelectorAll("img")) {
       if (!visible(img)) continue;
-      const url = abs(img.dataset.large_image || img.dataset.src || img.dataset.lazySrc || img.currentSrc || img.src || img.getAttribute("data-lazy-src"));
+      const url = abs(img.dataset.large_image || img.dataset.zoomImage || img.dataset.image || img.dataset.original || img.dataset.src || img.dataset.lazySrc || img.getAttribute("data-zoom-image") || img.getAttribute("data-original") || img.getAttribute("data-lazy-src") || img.currentSrc || img.src || img.closest("a")?.href);
       if (!url || !/^https?:/.test(url)) continue;
       const parsed = new URL(url);
       const identity = parsed.origin + parsed.pathname;
@@ -102,7 +139,7 @@ function extractProduct() {
       const description = [img.alt, img.className, parsed.pathname].join(" ");
       if (/logo|avatar|icon|payment|banner|sprite/i.test(description)) continue;
       if (img.naturalWidth && img.naturalWidth < 180) continue;
-      if (img.closest(".related,.upsells,.cross-sells,.recommended-products,.related.products,.upsells.products")) continue;
+      if (img.closest(".related,.upsells,.cross-sells,.recommended-products,.related.products,.upsells.products,.similar-products,.product-recommendations,.also-bought,.product-list,.products-grid,.product-item")) continue;
       imageCandidates.push({url, alt:cleanText(img.alt), width:img.naturalWidth||0, height:img.naturalHeight||0});
     }
   }
