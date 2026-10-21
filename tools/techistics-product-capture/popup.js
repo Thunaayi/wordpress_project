@@ -1,12 +1,12 @@
 const $ = id => document.getElementById(id);
 let capture = null;
-const clean = value => String(value ?? "").replace(/\\s+/g, " ").trim();
+const clean = value => String(value ?? "").replace(/\s+/g, " ").trim();
 function safeName(value) {
-  return String(value || "product").normalize("NFKD").replace(/[^\\w.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "product";
+  return String(value || "product").normalize("NFKD").replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "product";
 }
 function status(message) { $("status").textContent = message; }
 function extractProduct() {
-  const txt = el => (el?.innerText || el?.textContent || "").replace(/\\s+/g, " ").trim();
+  const txt = el => (el?.innerText || el?.textContent || "").replace(/\s+/g, " ").trim();
   const visible = el => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
   const abs = value => { try { return new URL(value, location.href).href; } catch { return ""; } };
   const meta = selector => document.querySelector(selector)?.content || "";
