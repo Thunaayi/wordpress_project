@@ -39,8 +39,8 @@ function extractProduct() {
     "[itemprop='price']"
   ]);
   if (!price) price = meta('meta[property="product:price:amount"]') || meta('meta[itemprop="price"]');
-  const name = clean(structured.name) || firstText(["h1.product_title", ".product_title", "main .product h1", "main h1", "h1"]);
-  let description = clean(structured.description || "");
+  const name = cleanText(structured.name) || firstText(["h1.product_title", ".product_title", "main .product h1", "main h1", "h1"]);
+  let description = cleanText(structured.description || "");
   if (!description) description = firstText([
     "#tab-description", ".woocommerce-Tabs-panel--description",
     ".woocommerce-product-details__short-description", ".product-description",
@@ -50,10 +50,10 @@ function extractProduct() {
   const brandObject = structured.brand;
   let brand = typeof brandObject === "string" ? brandObject : brandObject?.name || "";
   if (!brand) brand = firstText(["[itemprop='brand']", ".product_meta .brand", ".product-brand"]);
-  const sku = clean(structured.sku || firstText([".product_meta .sku", ".sku_wrapper .sku", "[itemprop='sku']"]));
+  const sku = cleanText(structured.sku || firstText([".product_meta .sku", ".sku_wrapper .sku", "[itemprop='sku']"]));
   const specs = [], specKeys = new Set();
   const addSpec = (name, value) => {
-    name = clean(name).replace(/:$/, ""); value = clean(value);
+    name = cleanText(name).replace(/:$/, ""); value = cleanText(value);
     if (!name || !value || name.length > 120 || value.length > 500 || name.toLowerCase() === value.toLowerCase()) return;
     const key = name.toLowerCase() + "|" + value.toLowerCase();
     if (!specKeys.has(key)) { specKeys.add(key); specs.push({name, value}); }
