@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{font:14px system-ui,sans-serif;color:#202720;background:#fff}body{width:390px;margin:0;padding:15px;box-sizing:border-box}
+h1{font-size:18px;margin:0 0 6px}.muted{font-size:12px;color:#5b665d;line-height:1.4}
+button{width:100%;border:0;border-radius:7px;padding:10px;background:#50665d;color:#fff;font-weight:650;cursor:pointer;margin-top:10px}
+button.secondary{background:#e7eee8;color:#24342a}button:disabled{opacity:.5;cursor:wait}
+label.field{display:block;font-weight:650;margin-top:9px}input[type=text],textarea{width:100%;box-sizing:border-box;border:1px solid #cbd3cc;border-radius:5px;padding:7px;font:13px system-ui;margin-top:3px}
+textarea{min-height:64px;resize:vertical}.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#editor{margin-top:10px}.imglist{max-height:140px;overflow:auto;border:1px solid #e0e5e0;border-radius:5px;padding:6px;margin-top:4px}
+.imgcheck{display:flex;align-items:flex-start;gap:6px;font-weight:400!important;font-size:12px;overflow-wrap:anywhere;margin:5px 0!important}.imgcheck input{margin-top:2px}
+#status{font-size:12px;white-space:pre-wrap;line-height:1.45;margin-top:10px}.warn{color:#8a4b00}.section{margin-top:12px;font-weight:700}
+</style>
+</head>
+<body>
+<h1>Techistics Product Capture</h1>
+<div class="muted">Scan the current product page, review the fields and gallery candidates, then save one ZIP per product. Nothing is saved until you click Save.</div>
+<button id="scan">Scan current page</button>
+<div id="editor" hidden>
+<label class="field">Product name<input id="name" type="text"></label>
+<div class="two"><label class="field">Brand<input id="brand" type="text"></label><label class="field">SKU / model<input id="sku" type="text"></label></div>
+<div class="two"><label class="field">Price<input id="price" type="text"></label><label class="field">Currency<input id="currency" type="text" value="PKR"></label></div>
+<label class="field">Description<textarea id="description"></textarea></label>
+<label class="field">Specifications — one per line, format: Name: Value<textarea id="specs" placeholder="Interface: USB 3.2\nCapacity: 1TB"></textarea></label>
+<div class="section">Product gallery candidates</div>
+<div class="muted">Only images found in the product gallery or main product detail area are listed. Uncheck anything unrelated.</div>
+<div id="images" class="imglist"></div>
+<button id="save">Save product ZIP</button>
+<button id="rescan" class="secondary">Scan again</button>
+</div>
+<div id="status" role="status"></div>
+<script src="popup.js"></script>
+</body></html>
