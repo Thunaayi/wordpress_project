@@ -2,6 +2,16 @@ const fs = require("fs");
 const path = require("path");
 
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".avif", ".gif", ".bmp", ".tif", ".tiff"]);
+const GENERIC_NAME_WORDS = new Set([
+  "the", "and", "for", "with", "from", "price", "in", "new", "latest", "gaming",
+  "computer", "computers", "pc", "desktop", "black", "white", "wireless", "wired",
+  "original", "official", "product", "products", "series", "edition", "version",
+  "model", "brand", "internal", "external", "storage", "drive", "solid", "state",
+  "disk", "ssd", "hdd", "memory", "ram", "graphics", "card", "cooler", "cooling",
+  "fan", "fans", "case", "casing", "power", "supply", "keyboard", "mouse", "headset",
+  "headphone", "monitor", "display", "motherboard", "processor", "cpu", "laptop",
+  "chair", "controller", "cable", "adapter", "mechanical", "gaming"
+]);
 
 function clean(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
@@ -32,20 +42,32 @@ function loadDoneImageIndex(doneDirectory) {
 function hasDelimitedToken(filename, value) {
   const token = normalize(value);
   if (!token) return false;
-  const escaped = token.split(" ").map(part => part.replace(/[.*+?^$\u007b\u007d()|[\]\\]/g, "\\$&")).join("[^a-z0-9]+");
+  const escaped = token.split(" ").map(part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^a-z0-9]+");
   return new RegExp("(?:^|[^a-z0-9])" + escaped + "(?:$|[^a-z0-9])", "i").test(filename);
+}
+
+function nameMatchesFilename(name, filename) {
+  const normalizedName = normalize(name);
+  if (normalizedName.length < 8) return false;
+  if (filename === normalizedName || filename.startsWith(normalizedName + " ")) return true;
+
+  // Product titles can be reordered or have a brand/prefix added by a retailer.
+  // Require all distinctive title tokens to occur in the image filename, rather
+  // than requiring the entire title to be the filename prefix.
+  const tokens = normalizedName.split(" ").filter(token => token.length >= 2 && !GENERIC_NAME_WORDS.has(token));
+  if (tokens.length < 2) return false;
+  return tokens.every(token => hasDelimitedToken(filename, token));
 }
 
 function isDoneProduct(product, index) {
   if (!index || !Array.isArray(index.files) || !index.files.length) return false;
   const id = clean(product.id || product.ID);
   const sku = clean(product.sku || product.SKU);
-  const name = normalize(product.name || product.Name);
+  const name = clean(product.name || product.Name);
   return index.files.some(file => {
     if (id && hasDelimitedToken(file.normalized, id)) return true;
     if (sku && sku.length >= 3 && hasDelimitedToken(file.normalized, sku)) return true;
-    if (name.length >= 8 && (file.normalized === name || file.normalized.startsWith(name + " "))) return true;
-    return false;
+    return nameMatchesFilename(name, file.normalized);
   });
 }
 
