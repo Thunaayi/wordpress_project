@@ -72,11 +72,15 @@ The source of truth for the eligibility rule and project constraints is the repo
 
 | Command | Behavior |
 | --- | --- |
-| `npm run enrich` | Search competitor retailers and enrich eligible products missing images in the original export, skipping products identified by `data/images/done/`. Requires `ENRICH_LIMIT`, `--limit=N`, or the explicitly configured unlimited mode. |\n| `npm run enrich -- --retry-done --limit=10` | Explicitly re-scrape products identified by image files in `data/images/done/`. |\n| `npm run enrich -- --include-done --limit=10` | Allow done-folder products into the normal eligibility flow; previous status rules still apply. |
+| `npm run enrich` | Search competitor retailers and enrich eligible products missing images in the original export, skipping products identified by `data/images/done/`. Requires `ENRICH_LIMIT`, `--limit=N`, or the explicitly configured unlimited mode. |
+| `npm run enrich -- --retry-done --limit=10` | Explicitly re-scrape products identified by image files in `data/images/done/`. |
+| `npm run enrich -- --include-done --limit=10` | Allow done-folder products into the normal eligibility flow; previous status rules still apply. |
 | `npm run enrich:fields` | Retry missing description/spec fields from a saved matched source URL. |
 | `npm run audit` | Run both local image audit and product quality audit; no network scraping or file cleanup. |
 | `npm run audit:images` | Hash local images and report exact byte-for-byte duplicates. |
-| `npm run audit:products` | Audit source-name match, images, description, and specs for original image-missing products. |\n| `npm run audit:techmatched-images` | Read-only audit of saved TechMatched image references, missing files, dimensions, and exact duplicate hashes. |\n| `npm run rescrape:techmatched-images -- --limit=5` | Targeted TechMatched-only image refresh from saved source URLs. Original inventory eligibility is enforced; previous files are retained. Rejects explicit single-color conflicts and exact image bytes already assigned to another TechMatched product. Rejects explicit single-color conflicts and exact image bytes already assigned to another TechMatched product. |
+| `npm run audit:products` | Audit source-name match, images, description, and specs for original image-missing products. |
+| `npm run audit:techmatched-images` | Read-only audit of saved TechMatched image references, missing files, dimensions, and exact duplicate hashes. |
+| `npm run rescrape:techmatched-images -- --limit=5` | Targeted TechMatched-only image refresh from saved source URLs. Original inventory eligibility is enforced; previous files are retained. Rejects explicit single-color conflicts and exact image bytes already assigned to another TechMatched product. Rejects explicit single-color conflicts and exact image bytes already assigned to another TechMatched product. |
 | `npm run rescrape:audit` | Re-run the matcher for rows in `output/rescrape_queue.csv`; original inventory eligibility is rechecked. |
 | `npm run retry:unfound` | Retry saved `NO_MATCH` products only on configured retailers not previously checked for that product. |
 | `npm run cleanup:images` | Preview an exact-duplicate cleanup plan. Preview-only by default. |
