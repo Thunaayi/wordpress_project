@@ -8,6 +8,8 @@ Enrich the Techistics WooCommerce export with competitor product images, descrip
 
 A populated original `Images` field — including Techistics-hosted WordPress media URLs or multiple URLs — is a hard exclusion from both normal enrichment and audit-triggered re-scraping. Do not bypass this rule just because a product is missing specs or a description. The original export is authoritative for eligibility; locally downloaded competitor images do not change it.
 
+Images placed in `scraper/data/images/done/` are a separate manual completion marker. Match image filenames to product ID, SKU, or full product-name slug; skip matching products in normal enrichment, audit retry queues, and TechMatched image refresh. Classify them as `DONE_FOLDER` in image inventory and `SKIPPED` in status output. Explicitly rerun only those products with `npm run enrich -- --retry-done --limit=10`; `--include-done` bypasses the done-folder exclusion for normal/audit runs. Products with populated original `Images` remain ineligible even with these overrides. The done folder is local user data and must not be committed.
+
 Never write scraped data back into the original catalogue automatically. Outputs are review artifacts for later import.
 
 ## Required fields and quality rules
@@ -39,6 +41,10 @@ Do not silently swallow site failures or silently discard candidate products. Th
 - The final product-page title validation decision.
 
 Do not claim a site was checked if the scraper did not actually request it. Early stopping is acceptable only when the existing confidence policy allows it; the report should show exactly what was checked before stopping.
+
+## Manual completion folder
+
+Any image file under `scraper/data/images/done/` (including subfolders) marks its product complete when its filename contains the product ID/SKU as a distinct token, or starts with the full normalized product name. Normal scraping and retry queues skip those products. `npm run enrich -- --retry-done --limit=10` deliberately re-scrapes products identified by that folder; `--include-done` disables the default exclusion. The original WooCommerce populated-Images safety gate always remains in force.
 
 ## Auditing and retry workflow
 
