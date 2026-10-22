@@ -868,17 +868,20 @@ function loadPreviouslyCheckedSources() {
   return byProduct;
 }
 
-function saveOutputs(results, inventory) {
+function saveOutputs(results, inventory, doneIndex, includeDone = false) {
   fs.mkdirSync(OUTPUT_DIR,{recursive:true});
   const byKey = new Map(results.map(r => [productKey(r), r]));
 
   // Export the inventory split separately for review. These reports are
   // classification-only: image-present products are never sent to enrichment.
   const imageHeaders = ["ID", "SKU", "Name", "Category", "Image status", "Existing image URL", "Existing specs", "Existing description"];
-  const imageRows = inventory.map(p => [
-    p.id, p.sku, p.name, p.category || "", p.imageStatus, p.existingImages || "",
-    p.existingSpecs ? "YES" : "NO", p.hasExistingDescription ? "YES" : "NO"
-  ]);
+  const imageRows = inventory.map(p => {
+    const imageStatus = p.hasExistingImage ? "HAS_IMAGE" : isDoneProduct(p, doneIndex) ? "DONE_FOLDER" : "MISSING_IMAGE";
+    return [
+      p.id, p.sku, p.name, p.category || "", imageStatus, p.existingImages || "",
+      p.existingSpecs ? "YES" : "NO", p.hasExistingDescription ? "YES" : "NO"
+    ];
+  });
   const writeCsv = (file, headers, rows) => {
     fs.writeFileSync(path.join(OUTPUT_DIR, file), [headers, ...rows].map(row => row.map(csvEscape).join(",")).join("\n") + "\n");
   };
@@ -889,16 +892,23 @@ function saveOutputs(results, inventory) {
     generatedAt: new Date().toISOString(),
     total: inventory.length,
     imagePresent: inventory.filter(p => p.hasExistingImage).length,
-    imageMissing: inventory.filter(p => !p.hasExistingImage).length,
+    imageMissing: inventory.filter(p => !p.hasExistingImage && !isDoneProduct(p, doneIndex)).length,
+    doneFolder: inventory.filter(p => !p.hasExistingImage && isDoneProduct(p, doneIndex)).length,
     products: inventory.map(p => ({
       id: p.id, sku: p.sku, name: p.name, category: p.category,
-      imageStatus: p.imageStatus, existingImages: p.existingImages,
+      imageStatus: p.hasExistingImage ? "HAS_IMAGE" : isDoneProduct(p, doneIndex) ? "DONE_FOLDER" : "MISSING_IMAGE", existingImages: p.existingImages,
       existingSpecs: p.existingSpecs, hasExistingDescription: p.hasExistingDescription
     }))
   }, null, 2));
 
   const targets = inventory.filter(p => !p.hasExistingImage);
-  const master=targets.map(p=>byKey.get(productKey(p)) || {...p,status:"PENDING",reason:"Not processed yet"});
+  const master=targets.map(p => {
+    const saved = byKey.get(productKey(p));
+    if (!includeDone && isDoneProduct(p, doneIndex)) {
+      return { ...(saved || p), status: "SKIPPED", reason: "Completed: image file found in data/images/done" };
+    }
+    return saved || { ...p, status: "PENDING", reason: "Not processed yet" };
+  });
   const headers=["ID","SKU","Name","Category","Status","Match score","Matched retailer","Matched product","Matched URL","Images found","Specs found","Description found","Reason"];
   const rows=[headers.join(",")];
   for(const r of master) rows.push([r.id,r.sku,r.name,r.category||"",r.status||"PENDING",r.matchScore||0,r.source||"",r.sourceName||r.candidateName||"",r.sourceUrl||r.candidateUrl||"",(r.images||[]).length,Object.keys(r.specs||{}).length,r.description?"YES":"NO",r.reason||""].map(csvEscape).join(","));
@@ -984,7 +994,7 @@ async function main() {
 
   if (!runTargets.length) {
     console.log("No unprocessed image-missing products found.");
-    saveOutputs([...previous.values()], inventory);
+    saveOutputs([...previous.values()], inventory, doneIndex, INCLUDE_DONE);
     return;
   }
 
@@ -1203,7 +1213,7 @@ async function main() {
   const merged = new Map(previous);
   for (const r of results) merged.set(productKey(r), r);
   flagSharedSourcePages([...merged.values()]);
-  saveOutputs([...merged.values()], inventory);
+  saveOutputs([...merged.values()], inventory, doneIndex, INCLUDE_DONE);
 
   const counts = results.reduce((a, r) => {
     a[r.status] = (a[r.status] || 0) + 1;
