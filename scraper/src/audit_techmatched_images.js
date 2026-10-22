@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const { parse } = require("csv-parse/sync");
 const puppeteer = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+const { loadDoneImageIndex, isDoneProduct } = require("./utils/doneImages");
 
 puppeteer.use(StealthPlugin());
 
@@ -18,6 +19,7 @@ const RESULTS_FILE = path.join(OUTPUT_DIR, "enriched_products.json");
 const AUDIT_FILE = path.join(OUTPUT_DIR, "techmatched_image_audit.csv");
 const argv = process.argv.slice(2);
 const RESCRAPE = argv.includes("--rescrape");
+const INCLUDE_DONE = argv.includes("--include-done");
 const LIMIT = Number((argv.find(a => a.startsWith("--limit=")) || "").split("=")[1] || process.env.ENRICH_LIMIT || 0);
 
 function clean(v) { return String(v ?? "").replace(/\s+/g, " ").trim(); }
@@ -237,9 +239,14 @@ function hammingDistance(a, b) {
 async function main() {
   const { parsed, rows } = loadResults();
   const eligible = loadEligibleIds();
-  const targets = rows.filter(r => clean(r.source).toLowerCase().includes("techmatched") && r.sourceUrl && eligible.has(key(r)));
+  const doneIndex = loadDoneImageIndex(IMAGE_DIR + path.sep + "done");
+  const targets = rows.filter(r => clean(r.source).toLowerCase().includes("techmatched") && r.sourceUrl && eligible.has(key(r)) &&
+    (!RESCRAPE || INCLUDE_DONE || !isDoneProduct(r, doneIndex)));
+  const skippedDone = rows.filter(r => clean(r.source).toLowerCase().includes("techmatched") && r.sourceUrl && eligible.has(key(r)) && isDoneProduct(r, doneIndex)).length;
   const selected = LIMIT > 0 ? targets.slice(0, LIMIT) : targets;
   console.log("TechMatched products found in saved results and still eligible: " + targets.length);
+  if (RESCRAPE) console.log("Done-folder products skipped from rescrape: " + (INCLUDE_DONE ? 0 : skippedDone));
+  if (RESCRAPE && INCLUDE_DONE) console.log("Explicit override enabled: --include-done");
   console.log("Mode: " + (RESCRAPE ? "targeted rescrape (does not delete old images)" : "read-only audit"));
   if (RESCRAPE && !selected.length) { console.log("No eligible TechMatched products to rescrape."); return; }
 
