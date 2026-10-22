@@ -5,6 +5,7 @@ const { parse } = require("csv-parse/sync");
 const puppeteer = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 const { variantConflict } = require("./utils/variantGuard");
+const { loadDoneImageIndex, isDoneProduct } = require("./utils/doneImages");
 
 puppeteer.use(StealthPlugin());
 
@@ -30,6 +31,8 @@ const SEARCH_AUDIT_FILE = path.join(OUTPUT_DIR, "search_audit.csv");
 const AUDIT_QUEUE_FILE = path.join(OUTPUT_DIR, "rescrape_queue.csv");
 const RETRY_AUDIT = argv.includes("--retry-audit");
 const RETRY_UNFOUND = argv.includes("--retry-unfound");
+const RETRY_DONE = argv.includes("--retry-done");
+const INCLUDE_DONE = argv.includes("--include-done") || RETRY_DONE;
 const MIN_MATCH = Number(process.env.ENRICH_MIN_MATCH || 0.72);
 const FORCE_NAMES = new Set((process.env.ENRICH_FORCE_NAMES || "").split("|").map(normalize).filter(Boolean));
 
@@ -928,10 +931,17 @@ async function main() {
 
   const inventory = loadInventory();
   const previous = loadPreviousResults();
+  const doneIndex = loadDoneImageIndex(path.join(DATA_DIR, "images", "done"));
+  const doneProducts = inventory.filter(p => !p.hasExistingImage && isDoneProduct(p, doneIndex));
   const previouslyCheckedSources = RETRY_UNFOUND ? loadPreviouslyCheckedSources() : new Map();
-  const candidateTargets = inventory.filter(p => !p.hasExistingImage);
+  const candidateTargets = inventory.filter(p => !p.hasExistingImage && (
+    INCLUDE_DONE || FORCE_NAMES.has(normalize(p.name)) || !isDoneProduct(p, doneIndex)
+  ));
   let targets;
-  if (RETRY_AUDIT) {
+  if (RETRY_DONE) {
+    targets = doneProducts;
+    console.log("Explicit done-folder retry mode: selected " + targets.length + " products matched to images in data/images/done.");
+  } else if (RETRY_AUDIT) {
     if (!fs.existsSync(AUDIT_QUEUE_FILE)) throw new Error("Audit retry queue not found: " + AUDIT_QUEUE_FILE + ". Run npm run audit first.");
     const queueRows = parse(fs.readFileSync(AUDIT_QUEUE_FILE, "utf8"), { columns: true, skip_empty_lines: true, bom: true });
     const queueKeys = new Set(queueRows.map(row => productKey({ id: row.ID, sku: row.SKU, name: row.Name })).filter(Boolean));
@@ -944,10 +954,11 @@ async function main() {
     targets = candidateTargets.filter(p => {
       const prior = previous.get(productKey(p));
       const priorStatus = String(prior?.status || "").toUpperCase();
+      // Explicit product names and --retry-done override the remembered completion status.
+      if (FORCE_NAMES.has(normalize(p.name))) return true;
       // NO_MATCH is only retried by --retry-unfound, which excludes every
       // retailer already recorded in the search ledger.
       if (priorStatus === "NO_MATCH") return false;
-      if (FORCE_NAMES.has(normalize(p.name))) return true;
       return !prior || !["MATCHED", "SKIPPED"].includes(priorStatus);
     });
     // Put explicitly forced names first so a small ENRICH_LIMIT reliably
@@ -956,7 +967,9 @@ async function main() {
   }
   console.log("Inventory: " + inventory.length);
   console.log("Products with existing images (excluded): " + inventory.filter(p => p.hasExistingImage).length);
-  console.log("Products missing images (enrichment candidates): " + candidateTargets.length);
+  console.log("Products matched to data/images/done (normally skipped): " + doneProducts.length);
+  console.log("Done-folder override: " + (INCLUDE_DONE ? "enabled" : "disabled") + (RETRY_DONE ? " (retry only done-folder products)" : ""));
+  console.log("Products missing images eligible this run: " + candidateTargets.length);
   console.log("Configured start: " + START);
   console.log("Configured limit: " + (LIMIT || "UNLIMITED"));
 
