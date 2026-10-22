@@ -252,12 +252,9 @@ async function searchSite(page, source, productName, productId = "", targetName 
       console.log("    CHECK " + source.name + " | query: " + query);
       await goto(page, searchUrl, 2);
 
-      // $$eval (not $eval): $eval hands the callback a single matched
-      // Element, which has no .map — that's the "anchors.map is not a
-      // function" error. $$eval hands back the full NodeList as an array.
-      // $eval also throws outright when zero elements match, which is what
-      // produced the "failed to find element matching selector" errors on
-      // pages with no results at all.
+      // $eval returns all matching links as an array. Unlike $eval, it
+      // safely returns [] when a page has no links, so a normal no-results
+      // page is not logged as a scraper failure.
       let links;
       for (let readAttempt = 1; readAttempt <= 3; readAttempt++) {
         try {
