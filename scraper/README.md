@@ -51,7 +51,7 @@ To deliberately re-scrape only products marked in that folder:
 npm run enrich -- --retry-done --limit=10
 ```
 
-To let normal/audit runs consider done-folder products again, pass `--include-done`. Explicit `ENRICH_FORCE_NAMES` remains available for specific named products. The original export's populated-Images safety rule still applies to every mode. Do not commit the contents of `data/images/done/`.
+To let normal/audit runs consider done-folder products again, pass `--include-done`. `ENRICH_FORCE_NAMES` does not bypass the done-folder exclusion; pair it with `--include-done` if you intentionally need to retry a completed product. The original export's populated-Images safety rule still applies to every mode. Do not commit the contents of `data/images/done/`.
 
 The source of truth for the eligibility rule and project constraints is the repository-root `AGENTS.md`. Read it before changing scraper behavior.
 
