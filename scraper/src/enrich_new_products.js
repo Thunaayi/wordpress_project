@@ -260,7 +260,7 @@ async function searchSite(page, source, productName, productId = "", targetName 
         try {
           // Some retailers redirect/reload shortly after the initial response.
           // Retry extraction if navigation destroys the current document context.
-          links = await page.$eval("a[href]", anchors => anchors.map(a => ({
+          links = await page.$$eval("a[href]", anchors => anchors.map(a => ({
             href: a.href,
             text: (a.innerText || a.textContent || a.getAttribute("title") || a.querySelector("img")?.alt || "").trim(),
             title: (a.getAttribute("title") || "").trim()
