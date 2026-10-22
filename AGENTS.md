@@ -44,7 +44,7 @@ Do not claim a site was checked if the scraper did not actually request it. Earl
 
 ## Manual completion folder
 
-Any image file under `scraper/data/images/done/` (including subfolders) marks its product complete when its filename contains the product ID/SKU as a distinct token, or starts with the full normalized product name. Normal scraping and retry queues skip those products. `npm run enrich -- --retry-done --limit=10` deliberately re-scrapes products identified by that folder; `--include-done` disables the default exclusion. The original WooCommerce populated-Images safety gate always remains in force.
+Any image file under `scraper/data/images/done/` (including subfolders) marks its product complete when its filename contains the product ID/SKU as a distinct token, or starts with the full normalized product name. Normal scraping and retry queues skip those products. `npm run enrich -- --retry-done --limit=10` deliberately re-scrapes products identified by that folder; `--include-done` disables the default exclusion. The original WooCommerce populated-Images safety gate always remains in force. `ENRICH_FORCE_NAMES` does not bypass the done-folder exclusion unless `--include-done` is explicitly passed.
 
 ## Auditing and retry workflow
 
