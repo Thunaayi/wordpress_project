@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { parse } = require("csv-parse/sync");
+const { loadDoneImageIndex, isDoneProduct } = require("./utils/doneImages");
 
 const ROOT = path.join(__dirname, "..");
 const DATA_DIR = path.join(ROOT, "data");
@@ -128,10 +129,12 @@ function main() {
     columns: true, skip_empty_lines: true, relax_column_count: true, bom: true
   });
   const enriched = loadResults();
+  const doneIndex = loadDoneImageIndex(path.join(DATA_DIR, "images", "done"));
   const auditHeaders = ["ID","SKU","Name","Category","Original image status","Prior status","Source","Source product name","Name score","Image count","Specs object count","Structured specs in description","Description present","Image issues","Audit decision","Retry reasons","Source URL"];
   const queueHeaders = ["ID","SKU","Name","Category","Reason","Prior status","Source URL","Name score","Specs count","Image count"];
   const auditRows = [], queueRows = [];
   let excludedWithImages = 0;
+  let excludedDoneFolder = 0;
 
   for (const raw of inventoryRows) {
     const name = clean(raw.Name || raw.name);
@@ -145,6 +148,10 @@ function main() {
     };
     if (product.hasImage) {
       excludedWithImages++;
+      continue;
+    }
+    if (isDoneProduct(product, doneIndex)) {
+      excludedDoneFolder++;
       continue;
     }
 
@@ -195,6 +202,7 @@ function main() {
   console.log("=== Product quality audit (read-only) ===");
   console.log("Original inventory rows inspected: " + inventoryRows.length);
   console.log("Products excluded because original Images field is populated: " + excludedWithImages);
+  console.log("Products excluded because images are in data/images/done: " + excludedDoneFolder);
   console.log("Image-missing products audited: " + auditRows.length);
   console.log("Passed quality checks: " + pass);
   console.log("Needs review/re-scrape: " + queueRows.length);
