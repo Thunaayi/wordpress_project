@@ -41,6 +41,18 @@ Remove-Item Env:ENRICH_FORCE_NAMES
 
 The retry still obeys the original-export rule: products with any populated `Images` field are excluded. Check the generated image files before using them. The downloader preserves retailer image URLs instead of rewriting thumbnail URLs, and the extractor prioritizes WooCommerce/product-gallery images to reduce 404s and site-icon contamination.
 
+## Manual completion folder
+
+Put any images for products you have already handled in `scraper/data/images/done/`. The scraper recursively checks this folder and matches image filenames against product IDs, SKUs, or full product-name slugs. Matching products are excluded from normal enrichment and the audit retry queue, and show as `DONE_FOLDER` / `SKIPPED` in generated inventory/status reports.
+
+To deliberately re-scrape only products marked in that folder:
+
+```powershell
+npm run enrich -- --retry-done --limit=10
+```
+
+To let normal/audit runs consider done-folder products again, pass `--include-done`. Explicit `ENRICH_FORCE_NAMES` remains available for specific named products. The original export's populated-Images safety rule still applies to every mode. Do not commit the contents of `data/images/done/`.
+
 The source of truth for the eligibility rule and project constraints is the repository-root `AGENTS.md`. Read it before changing scraper behavior.
 
 **Active retailer sources:** Czone, PCLab, Tech.com.pk, ZAH Computers, TechMatched, Zestro Gaming, and MHK Tech Zone. Techlad.pk has been removed while it is down. MHK Tech Zone uses WooCommerce-style product URLs; validate its selectors with a small batch before relying on it at scale.
@@ -60,7 +72,7 @@ The source of truth for the eligibility rule and project constraints is the repo
 
 | Command | Behavior |
 | --- | --- |
-| `npm run enrich` | Search competitor retailers and enrich eligible products missing images in the original export. Requires `ENRICH_LIMIT`, `--limit=N`, or the explicitly configured unlimited mode. |
+| `npm run enrich` | Search competitor retailers and enrich eligible products missing images in the original export, skipping products identified by `data/images/done/`. Requires `ENRICH_LIMIT`, `--limit=N`, or the explicitly configured unlimited mode. |\n| `npm run enrich -- --retry-done --limit=10` | Explicitly re-scrape products identified by image files in `data/images/done/`. |\n| `npm run enrich -- --include-done --limit=10` | Allow done-folder products into the normal eligibility flow; previous status rules still apply. |
 | `npm run enrich:fields` | Retry missing description/spec fields from a saved matched source URL. |
 | `npm run audit` | Run both local image audit and product quality audit; no network scraping or file cleanup. |
 | `npm run audit:images` | Hash local images and report exact byte-for-byte duplicates. |
