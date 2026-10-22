@@ -267,7 +267,7 @@ async function searchSite(page, source, productName, productId = "", targetName 
           })).filter(x => x.href));
           break;
         } catch (readError) {
-          const navigationRace = /execution context was destroyed|cannot find context|frame was detached|navigation/i.test(String(readError && readError.message || readError));
+          const navigationRace = /execution context was destroyed|cannot find context|frame was detached|navigation|DOM\\.resolveNode|Node with given id does not exist|does not belong to the document/i.test(String(readError && readError.message || readError));
           if (!navigationRace || readAttempt === 3) throw readError;
           console.log("    " + source.name + " page changed during extraction; retrying search read (" + (readAttempt + 1) + "/3).");
           await new Promise(resolve => setTimeout(resolve, 500 * readAttempt));
