@@ -258,11 +258,25 @@ async function searchSite(page, source, productName, productId = "", targetName 
       // $eval also throws outright when zero elements match, which is what
       // produced the "failed to find element matching selector" errors on
       // pages with no results at all.
-      const links = await page.$$eval("a[href]", anchors => anchors.map(a => ({
-        href: a.href,
-        text: (a.innerText || a.textContent || a.getAttribute("title") || a.querySelector("img")?.alt || "").trim(),
-        title: (a.getAttribute("title") || "").trim()
-      })).filter(x => x.href));
+      let links;
+      for (let readAttempt = 1; readAttempt <= 3; readAttempt++) {
+        try {
+          // Some retailers redirect/reload shortly after the initial response.
+          // Retry extraction if navigation destroys the current document context.
+          links = await page.$eval("a[href]", anchors => anchors.map(a => ({
+            href: a.href,
+            text: (a.innerText || a.textContent || a.getAttribute("title") || a.querySelector("img")?.alt || "").trim(),
+            title: (a.getAttribute("title") || "").trim()
+          })).filter(x => x.href));
+          break;
+        } catch (readError) {
+          const navigationRace = /execution context was destroyed|cannot find context|frame was detached|navigation/i.test(String(readError && readError.message || readError));
+          if (!navigationRace || readAttempt === 3) throw readError;
+          console.log("    " + source.name + " page changed during extraction; retrying search read (" + (readAttempt + 1) + "/3).");
+          await new Promise(resolve => setTimeout(resolve, 500 * readAttempt));
+          await goto(page, searchUrl, 2);
+        }
+      }
 
       const candidates = [];
       for (const item of links) {
@@ -945,7 +959,7 @@ async function main() {
   const doneProducts = inventory.filter(p => !p.hasExistingImage && isDoneProduct(p, doneIndex));
   const previouslyCheckedSources = RETRY_UNFOUND ? loadPreviouslyCheckedSources() : new Map();
   const candidateTargets = inventory.filter(p => !p.hasExistingImage && (
-    INCLUDE_DONE || FORCE_NAMES.has(normalize(p.name)) || !isDoneProduct(p, doneIndex)
+    INCLUDE_DONE || !isDoneProduct(p, doneIndex)
   ));
   let targets;
   if (RETRY_DONE) {
@@ -977,8 +991,11 @@ async function main() {
   }
   console.log("Inventory: " + inventory.length);
   console.log("Products with existing images (excluded): " + inventory.filter(p => p.hasExistingImage).length);
+  console.log("Done folder: " + doneIndex.directory);
+  console.log("Image files indexed in done folder (including subfolders): " + doneIndex.files.length);
   console.log("Products matched to data/images/done (normally skipped): " + doneProducts.length);
   console.log("Done-folder override: " + (INCLUDE_DONE ? "enabled" : "disabled") + (RETRY_DONE ? " (retry only done-folder products)" : ""));
+  if (FORCE_NAMES.size) console.log("Explicit ENRICH_FORCE_NAMES configured: " + [...FORCE_NAMES].join(" | ") + " (does not override done-folder exclusion without --include-done).");
   console.log("Products missing images eligible this run: " + candidateTargets.length);
   console.log("Configured start: " + START);
   console.log("Configured limit: " + (LIMIT || "UNLIMITED"));
